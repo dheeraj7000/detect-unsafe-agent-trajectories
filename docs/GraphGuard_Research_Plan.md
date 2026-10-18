@@ -22,14 +22,14 @@
 
 ## 2. Timeline Overview (24 weeks / ~6 months)
 
-| Phase | Weeks | Focus | Exit Criterion |
-|-------|-------|-------|----------------|
-| 1 — Harness | 1–4 | MCP/tool gateway, sandbox, event schema, replay | Deterministic replay of 3 task families |
-| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | Ground-truth violation/onset labels |
-| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | Calibrated baseline curves |
-| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | Risk score after every action |
-| 5 — Study | 17–22 | Matched-FPR early-detection + ablations | Statistical comparison with CIs |
-| 6 — Release | 23–24 | Code, schemas, tasks, traces, paper/report | Reproducible public benchmark |
+| Phase | Weeks | Focus | Status |
+|-------|-------|-------|--------|
+| 1 — Harness | 1–4 | MCP/tool gateway, sandbox, event schema, replay | ✅ Complete |
+| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
+| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
+| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | ✅ Complete |
+| 5 — Study | 17–22 | Matched-FPR early-detection experiments + ablations | Next |
+| 6 — Release | 23–24 | Code, schemas, tasks, traces, paper/report | Planned |
 
 ---
 
@@ -208,14 +208,30 @@
 
 ---
 
-## 7. Immediate Next Steps (Week 1)
+## 7. Implementation Status & Next Steps (Phase 5)
 
-1. **Stand up repo** — initialize GraphGuard project with folder structure (`harness/`, `dataset/`, `monitors/`, `evaluator/`, `docs/`)
-2. **Define event schema** — canonical node/edge types (from proposal) in JSON Schema
-3. **Prototype gateway** — minimal MCP proxy that mediates one tool type (e.g., file read/write) with a policy engine
-4. **Sandbox one task family** — e.g., email/file workflow with a known unsafe-event onset
-5. **Implement replay** — record and deterministically replay a short episode
-6. **Create labeling rubric** — document how unsafe-event steps and policy violations are labeled
+### Completed (Phases 1–4)
+
+| Phase | Deliverable | Location |
+|-------|-------------|----------|
+| 1 — Harness | Agent Control & Evaluation Lab: MCP/gateway, policy engine, mock sandboxes (file/email/code), agent interface, online behavior-graph builder, orchestrator, deterministic replay | `harness/` |
+| 2 — Dataset | Labeled benign + adversarial episodes across 6 threat scenarios; labeling rubric; synthetic variant pairs (provenance/authorization/destination) | `dataset/` |
+| 3 — Baselines | Rules, feature, sequence, temporal monitors; FPR calibration (1%/5%); early-detection metrics | `monitors/` |
+| 4 — Graph monitor | TemporalGraphNN (typed message-passing GNN), GraphMonitor wrapper, graph→tensor conversion | `monitors/graph.py`, `monitors/graph_model.py`, `harness/graph.py` |
+
+Tests: **24 passing**. Demos: `demo.py`, `demo_phase3.py`, `demo_phase4.py`.
+
+### Phase 5 — Study (next)
+
+1. **Build the matched-FPR evaluation protocol** — run every monitor at every prefix of each test episode; record detection step, lead actions, normalized detection time at FPR = 1% and 5%.
+2. **Run H1–H5 experiments** — earlier warning, horizon robustness, structural generalization, interpretability, hybrid value.
+3. **Key ablations** — remove provenance/authorization/temporal edges; full graph vs. bounded recent subgraph; train on one attack family / test on unseen; counterfactual replay (remove permission / sanitize tool output).
+4. **Statistical rigor** — confidence intervals, significance testing, fixed seeds, immutable scenario manifests.
+5. **Write results** — compare graph vs. sequence baselines on lead time at matched FPR; document whether H1 is supported.
+
+### Phase 6 — Release (planned)
+
+Code, schemas, replayable scenarios, benchmark scripts, trained baselines, dashboard/trace viewer, and concise research report/paper.
 
 ---
 
