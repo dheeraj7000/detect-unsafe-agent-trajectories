@@ -20,10 +20,10 @@ At matched false-positive rate and task utility, does a graph-based monitor dete
 
 ```
 graphguard-work/
-├── harness/            # Agent Control & Evaluation Lab (MCP gateway, sandbox, telemetry)
-├── dataset/            # Labeled benign + adversarial long-horizon episodes
-├── monitors/           # Rules, sequence, graph, and hybrid monitors
-├── evaluator/          # Early-warning evaluation protocol & metrics
+├── harness/            # Agent Control & Evaluation Lab (Phase 1 ✅)
+├── dataset/            # Labeled benign + adversarial episodes (Phase 2 ✅)
+├── monitors/           # Rules, sequence, graph, hybrid monitors (Phase 3)
+├── evaluator/          # Early-warning evaluation protocol & metrics (Phase 5)
 ├── configs/            # Scenario manifests, hyperparameters, alert thresholds
 ├── docs/               # Research plan, schema, reports
 ├── notebooks/          # Exploration & analysis notebooks
@@ -44,16 +44,59 @@ graphguard-work/
 
 Support the hypothesis only if the graph monitor produces **statistically meaningful earlier detection at matched FPR**, without materially reducing benign task utility, and the advantage persists on unseen scenarios or longer horizons. If accuracy improves but lead time does not, the central hypothesis is **not** supported.
 
-## Phases (24 weeks)
+## Progress
 
-1. **Harness** (wks 1–4): MCP/tool gateway, sandbox, event schema, replay
-2. **Dataset** (wks 5–8): Benign + adversarial long-horizon episodes with ground-truth labels
-3. **Baselines** (wks 9–12): Rules + feature + sequence monitors
-4. **Graph monitor** (wks 13–16): Online graph builder + GNN/graph-transformer
-5. **Study** (wks 17–22): Matched-FPR early-detection experiments + ablations
-6. **Release** (wks 23–24): Code, schemas, tasks, traces, paper/report
+| Phase | Weeks | Focus | Status |
+|-------|-------|-------|--------|
+| 1 — Harness | 1–4 | MCP/gateway, sandbox, event schema, replay | ✅ Complete |
+| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
+| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | Next |
+| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | Planned |
+| 5 — Study | 17–22 | Matched-FPR early-detection + ablations | Planned |
+| 6 — Release | 23–24 | Code, schemas, traces, paper/report | Planned |
 
-## Technical Stack
+## Phase 1 — Harness (complete)
+
+**Exit criterion met:** deterministic replay of 3 task families (`file_backup`, `email_triage`, `code_review`).
+
+Modules: `schema.py`, `telemetry.py`, `gateway.py`, `sandbox.py`, `agent.py`, `graph.py`, `orchestrator.py`, `replay.py`, `scenarios.py`
+
+- MCP-compatible tool proxy with identity + policy engine (6 rules: credential write, external send, dangerous code, memory poison, admin write, secret read)
+- Mock sandboxes: file, email, code
+- Online typed behavior-graph builder (NetworkX)
+- Deterministic replay verified across 3 runs per family
+
+## Phase 2 — Dataset (complete)
+
+Labeled benign + adversarial episodes across **6 threat scenarios**, all with ground-truth labels derived from environment state + explicit policy (no LLM judge):
+
+| Scenario | Attack family | Severity |
+|----------|--------------|----------|
+| Indirect prompt injection / tool-output hijacking | `indirect_prompt_injection` | high |
+| Memory poisoning | `memory_poisoning` | high |
+| Privilege escalation / permission probing | `privilege_escalation` | critical |
+| Sensitive-data exfiltration | `data_exfiltration` | critical |
+| Goal drift / specification gaming | `goal_drift` | medium |
+| Multi-agent delegation | `multi_agent_delegation` | high |
+
+Modules: `generator.py`, `labeler.py`, `store.py`, `synthetic.py`, `LABELING_RUBRIC.md`
+
+- `generator.py`: episode generator; each adversarial episode is flagged by a policy denial at a known onset step
+- `labeler.py`: ground-truth labels (task_success, policy_violation, unsafe_event_step, attack_family, affected_asset, trust_boundary, severity) + graph detection signals
+- `store.py`: JSONL episode store + index + Parquet export
+- `synthetic.py`: provenance / authorization / destination variant pairs for H3 structural generalization
+
+## How to run
+
+```bash
+# Phase 1 demo: 3 task families + deterministic replay
+python demo.py
+
+# Run all tests
+python -m pytest tests/ -v
+```
+
+## Minimal Technical Stack
 
 - Python agent harness; MCP-compatible proxy/gateway; Dockerized tool sandbox
 - OpenTelemetry-style event schema + JSONL/Parquet trace store
@@ -64,4 +107,9 @@ Support the hypothesis only if the graph monitor produces **statistically meanin
 ## See Also
 
 - `docs/GraphGuard_Research_Plan.md` — full research & project plan
-- `docs/` — behavior graph schema, evaluation protocol, threat scenarios
+- `dataset/LABELING_RUBRIC.md` — labeling principles and ground-truth sources
+- `configs/default.yaml` — default harness configuration
+
+## Repo
+
+`https://github.com/dheeraj7000/detect-unsafe-agent-trajectories.git`
