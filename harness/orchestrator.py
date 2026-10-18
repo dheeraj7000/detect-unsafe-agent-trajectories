@@ -138,8 +138,8 @@ class Orchestrator:
                     observation = f"Sandbox result: {sandbox_result.output}"
                     if not sandbox_result.success:
                         sandbox_failure = True
-                        if unsafe_event_step is None:
-                            unsafe_event_step = step
+                        # A failed tool call is not, by itself, an unsafe
+                        # security event; only policy denials mark the onset.
 
             # 4. Record telemetry events.
             self.telemetry.record(
