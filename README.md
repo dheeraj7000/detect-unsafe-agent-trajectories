@@ -52,7 +52,7 @@ Support the hypothesis only if the graph monitor produces **statistically meanin
 | 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
 | 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
 | 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | ✅ Complete |
-| 5 — Study | 17–22 | Matched-FPR early-detection + ablations | Planned |
+| 5 — Study | 17–22 | Matched-FPR early-detection + ablations | ✅ Complete |
 | 6 — Release | 23–24 | Code, schemas, traces, paper/report | Planned |
 
 ## Phase 1 — Harness (complete)
@@ -128,6 +128,36 @@ flat sequence model. `demo_phase4.py` demonstrates calibrated early
 detection across the 6 threat scenarios and compares lead time against
 the sequence baselines.
 
+## Phase 5 — Study (complete)
+
+Matched-FPR early-detection study comparing the graph monitor against
+sequence baselines, with hypothesis testing (H1–H5), ablations, and
+counterfactual replay.
+
+Modules: `study.py`, `statistics.py`, `ablations.py`, `counterfactual.py`
+(in `evaluator/`).
+
+| Component | Purpose |
+|-----------|---------|
+| StudyRunner | End-to-end study: fit → calibrate → evaluate → aggregate → statistical comparison |
+| statistics.py | Bootstrap CIs, paired t-test, Wilcoxon signed-rank, CI for difference |
+| ablations.py | Graph structure variants (no provenance, no authorization, no temporal, untyped, bounded window) |
+| counterfactual.py | Counterfactual replay: remove dangerous dependency → risk should drop |
+
+Key metrics: normalized detection time, lead actions, TPR@FPR, detect rate,
+AUROC/AUPRC, monitoring overhead, calibration (ECE/Brier).
+
+Hypothesis evaluation:
+- **H1 (Earlier warning)**: graph lead time > sequence lead time at matched FPR
+- **H2 (Horizon robustness)**: stratify by episode length
+- **H3 (Structural generalization)**: train on one attack family, test on unseen
+- **H4 (Interpretability)**: counterfactual replay — risk localizes to provenance/auth paths
+- **H5 (Hybrid value)**: graph + sequence + rules Pareto frontier
+
+`demo_phase5.py` demonstrates the full study: calibration at FPR=5%, paired
+statistical comparisons (bootstrap CI + paired t-test + Wilcoxon), ablation
+study, and counterfactual replay.
+
 ## How to run
 
 ```bash
@@ -139,6 +169,9 @@ python demo_phase3.py
 
 # Phase 4 demo: graph monitor vs sequence baselines
 python demo_phase4.py
+
+# Phase 5 demo: matched-FPR early-detection study
+python demo_phase5.py
 
 # Run all tests
 python -m pytest tests/ -v

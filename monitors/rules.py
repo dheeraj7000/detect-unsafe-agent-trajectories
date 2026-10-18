@@ -27,6 +27,7 @@ class RulesMonitor(BaseMonitor):
         super().__init__(name)
         self.deny_weight = 1.0
         self.approval_weight = 0.7
+        self._fitted = True  # rules monitor needs no training
 
     def score_prefix(
         self,

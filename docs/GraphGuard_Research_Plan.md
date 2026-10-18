@@ -28,7 +28,7 @@
 | 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
 | 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
 | 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | ✅ Complete |
-| 5 — Study | 17–22 | Matched-FPR early-detection experiments + ablations | Next |
+| 5 — Study | 17–22 | Matched-FPR early-detection experiments + ablations | ✅ Complete |
 | 6 — Release | 23–24 | Code, schemas, tasks, traces, paper/report | Planned |
 
 ---
