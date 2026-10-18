@@ -76,6 +76,7 @@ class Orchestrator:
         observation = f"Start task: {manifest.scenario_name}"
         task_success = False
         policy_violation = False
+        sandbox_failure = False
         unsafe_event_step = None
         sandbox_result: Optional[SandboxResult] = None
 
@@ -86,50 +87,59 @@ class Orchestrator:
             action = self.agent.act(observation, step)
 
             # 2. Gateway mediates (policy check).
-            decision = self.gateway.mediate(action.tool, action.arguments, step)
-
-            # 3. Intervention / execution.
-            intervened = False
-            alert = False
-
-            if decision["decision"] == "deny" and self.config.auto_intervene_on_deny:
-                intervened = True
-                alert = True
-                self.intervention_step = step
-                self.alerts.append({
-                    "step": step,
-                    "reason": "policy_deny",
-                    "tool": action.tool,
-                    "node_id": decision["node_id"],
-                })
-                observation = (
-                    f"Action blocked at step {step}: {action.tool} denied by policy."
-                )
-                policy_violation = True
-                if unsafe_event_step is None:
-                    unsafe_event_step = step
-                sandbox_result = SandboxResult(
-                    success=False, error="blocked by policy", side_effects=[]
-                )
-
-            elif decision["decision"] == "require_approval":
-                alert = True
-                self.alerts.append({
-                    "step": step,
-                    "reason": "requires_approval",
-                    "tool": action.tool,
-                    "node_id": decision["node_id"],
-                })
-                sandbox_result = self.sandbox.run(action.tool, action.arguments)
-                observation = f"Sandbox result: {sandbox_result.output}"
-
+            #    "noop" is a local no-op, not an external action — bypass gateway.
+            if action.tool == "noop":
+                decision = {"decision": "allow", "node_id": None, "tool": "noop",
+                            "arguments": action.arguments}
+                sandbox_result = SandboxResult(success=True, output="noop", side_effects=[])
+                intervened = False
+                alert = False
             else:
-                sandbox_result = self.sandbox.run(action.tool, action.arguments)
-                observation = f"Sandbox result: {sandbox_result.output}"
-                if not sandbox_result.success:
+                # 2a. Gateway decision.
+                decision = self.gateway.mediate(action.tool, action.arguments, step)
+
+                # 2b. Intervention / execution.
+                intervened = False
+                alert = False
+
+                if decision["decision"] == "deny" and self.config.auto_intervene_on_deny:
+                    intervened = True
+                    alert = True
+                    self.intervention_step = step
+                    self.alerts.append({
+                        "step": step,
+                        "reason": "policy_deny",
+                        "tool": action.tool,
+                        "node_id": decision["node_id"],
+                    })
+                    observation = (
+                        f"Action blocked at step {step}: {action.tool} denied by policy."
+                    )
                     policy_violation = True
                     if unsafe_event_step is None:
                         unsafe_event_step = step
+                    sandbox_result = SandboxResult(
+                        success=False, error="blocked by policy", side_effects=[]
+                    )
+
+                elif decision["decision"] == "require_approval":
+                    alert = True
+                    self.alerts.append({
+                        "step": step,
+                        "reason": "requires_approval",
+                        "tool": action.tool,
+                        "node_id": decision["node_id"],
+                    })
+                    sandbox_result = self.sandbox.run(action.tool, action.arguments)
+                    observation = f"Sandbox result: {sandbox_result.output}"
+
+                else:
+                    sandbox_result = self.sandbox.run(action.tool, action.arguments)
+                    observation = f"Sandbox result: {sandbox_result.output}"
+                    if not sandbox_result.success:
+                        sandbox_failure = True
+                        if unsafe_event_step is None:
+                            unsafe_event_step = step
 
             # 4. Record telemetry events.
             self.telemetry.record(
@@ -178,6 +188,7 @@ class Orchestrator:
             "episode_id": manifest.episode_id,
             "task_success": task_success,
             "policy_violation": policy_violation,
+            "sandbox_failure": sandbox_failure,
             "unsafe_event_step": unsafe_event_step,
             "total_steps": len(self.steps),
             "intervention_step": self.intervention_step,
