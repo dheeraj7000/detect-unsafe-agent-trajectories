@@ -177,6 +177,27 @@ python demo_phase5.py
 python -m pytest tests/ -v
 ```
 
+## Installation
+
+```bash
+# Clone and install
+git clone https://github.com/dheeraj7000/detect-unsafe-agent-trajectories.git
+cd detect-unsafe-agent-trajectories
+pip install -e .
+
+# Verify CLI
+graphguard --help
+graphguard run --scenario file_backup --monitor graph --steps 10
+graphguard compare --scenarios data_exfiltration --monitors graph,sequence --fpr 0.05
+graphguard calibrate --monitor graph --fpr 0.01 0.05
+graphguard ablate --scenarios data_exfiltration --fpr 0.05
+```
+
+## Trace viewer
+
+Open `docs/_static/trace_viewer.html` in a browser and load a trace file from `data/traces/*.jsonl` to step through an episode and inspect the partial behavior graph at each step.
+
+
 ## Minimal Technical Stack
 
 - Python agent harness; MCP-compatible proxy/gateway; Dockerized tool sandbox
