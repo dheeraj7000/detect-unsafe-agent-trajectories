@@ -1,0 +1,18 @@
+# GraphGuard Phase 1 — default harness configuration
+harness:
+  max_steps: 500
+  auto_intervene_on_deny: true
+  record_graph: true
+
+telemetry:
+  base_dir: "data/traces"
+
+gateway:
+  identity: "agent"
+
+sandbox:
+  file_root: "/tmp/graphguard_sandbox"
+
+scenario:
+  task_family: "file_backup"
+  seed: 42
