@@ -50,8 +50,8 @@ Support the hypothesis only if the graph monitor produces **statistically meanin
 |-------|-------|-------|--------|
 | 1 — Harness | 1–4 | MCP/gateway, sandbox, event schema, replay | ✅ Complete |
 | 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
-| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | Next |
-| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | Planned |
+| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
+| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | Next |
 | 5 — Study | 17–22 | Matched-FPR early-detection + ablations | Planned |
 | 6 — Release | 23–24 | Code, schemas, traces, paper/report | Planned |
 
@@ -86,11 +86,35 @@ Modules: `generator.py`, `labeler.py`, `store.py`, `synthetic.py`, `LABELING_RUB
 - `store.py`: JSONL episode store + index + Parquet export
 - `synthetic.py`: provenance / authorization / destination variant pairs for H3 structural generalization
 
+## Phase 3 — Baselines (complete)
+
+Ordinary-trajectory baselines, all sharing the `BaseMonitor` interface
+(`score_prefix` → risk score in [0,1]; `calibrate` → FPR thresholds at 1%/5%;
+early-detection metrics in `calibrator.py`).
+
+Modules: `base.py`, `rules.py`, `feature.py`, `sequence.py`, `temporal.py`,
+`calibrator.py`, `registry.py`
+
+| Monitor | Input | Role |
+|---------|-------|------|
+| rules | gateway policy decisions | High-precision interpretable baseline |
+| feature | aggregated trace statistics | Cheap classical baseline (LogisticRegression) |
+| sequence | serialized trajectory prefix | Primary ordinary-trajectory baseline (TF-IDF + LR) |
+| temporal | event embeddings over time | Strong long-context baseline (sklearn MLP, optional torch) |
+
+Each monitor is calibrated on benign validation traces so that alert
+thresholds hit target false-positive rates (1% and 5%). Early-detection
+metrics (lead time, normalized detection time, TPR@FPR) are demonstrated in
+`demo_phase3.py`.
+
 ## How to run
 
 ```bash
 # Phase 1 demo: 3 task families + deterministic replay
 python demo.py
+
+# Phase 3 demo: baseline monitors + early detection
+python demo_phase3.py
 
 # Run all tests
 python -m pytest tests/ -v
