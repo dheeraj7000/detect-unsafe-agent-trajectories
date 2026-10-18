@@ -13,8 +13,9 @@ rates (1% and 5%) via :mod:`monitors.calibrator`.
 from .base import BaseMonitor, MonitorOutput
 from .calibrator import calibrate_all, calibrate_monitor, evaluate_episode
 from .feature import FeatureMonitor
-from .registry import (MonitorRegistry, make_baselines, make_all_monitors,
-                       make_monitor)
+from .graph import GraphMonitor
+from .registry import (MonitorRegistry, make_all, make_baselines, make_monitor,
+                       make_proposed)
 from .rules import RulesMonitor
 from .sequence import SequenceMonitor
 from .temporal import TemporalSequenceMonitor
@@ -26,11 +27,13 @@ __all__ = [
     "calibrate_monitor",
     "evaluate_episode",
     "FeatureMonitor",
+    "GraphMonitor",
     "MonitorRegistry",
     "RulesMonitor",
     "SequenceMonitor",
     "TemporalSequenceMonitor",
-    "make_monitor",
-    "make_all_monitors",
+    "make_all",
     "make_baselines",
+    "make_monitor",
+    "make_proposed",
 ]

@@ -12,12 +12,15 @@ Edges: follows, derived_from, reads, writes, authorizes, invokes, depends_on,
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 try:
     import networkx as nx
 except ImportError:  # pragma: no cover - networkx optional for prototyping
     nx = None
+
+import numpy as np
+import torch
 
 from .schema import EdgeType, GraphEdge, GraphNode, NodeType, TraceEvent
 
@@ -174,3 +177,78 @@ class BehaviorGraph:
                     "step": e.step,
                 })
         return findings
+
+
+# ---------------------------------------------------------------------------
+# Type <-> index mappings for GNN feature encoding
+# ---------------------------------------------------------------------------
+
+NODE_TYPE_LIST = [t.value for t in NodeType]
+EDGE_TYPE_LIST = [t.value for t in EdgeType]
+
+NODE_TYPE_TO_IDX = {t: i for i, t in enumerate(NODE_TYPE_LIST)}
+EDGE_TYPE_TO_IDX = {t: i for i, t in enumerate(EDGE_TYPE_LIST)}
+
+
+def graph_to_tensors(graph: BehaviorGraph, max_steps: int = 500):
+    """Convert a BehaviorGraph into PyTorch tensors for the GNN.
+
+    Returns:
+        x:           (num_nodes, node_feat_dim) float tensor — node features
+                     [node_type_onehot, step_normalized]
+        edge_index:  (2, num_edges) long tensor — COO connectivity
+        edge_attr:   (num_edges, edge_feat_dim) float tensor — edge features
+                     [edge_type_onehot, step_normalized]
+        node_id_to_idx: dict mapping node_id -> row index in x
+    """
+    nodes = list(graph.nodes.values())
+    edges = list(graph.edges.values())
+
+    node_id_to_idx = {n.node_id: i for i, n in enumerate(nodes)}
+    num_nodes = len(nodes)
+    num_edges = len(edges)
+
+    # ---- Node features ----------------------------------------------------
+    if num_nodes > 0:
+        node_type_idx = [NODE_TYPE_TO_IDX[n.node_type.value] for n in nodes]
+        node_type_onehot = torch.zeros(num_nodes, len(NODE_TYPE_LIST))
+        node_type_onehot[torch.arange(num_nodes),
+                         torch.tensor(node_type_idx)] = 1.0
+        step_norm = torch.tensor(
+            [[n.step / max(max_steps, 1)] for n in nodes], dtype=torch.float32
+        )
+        x = torch.cat([node_type_onehot, step_norm], dim=1)
+    else:
+        # Single dummy zero node so batches always have a consistent shape.
+        x = torch.zeros(1, len(NODE_TYPE_LIST) + 1)
+
+    # ---- Edge index / features -------------------------------------------
+    if num_edges > 0:
+        src = []
+        dst = []
+        edge_type_idx = []
+        edge_step_norm = []
+        for e in edges:
+            s = node_id_to_idx.get(e.source_id)
+            t = node_id_to_idx.get(e.target_id)
+            if s is None or t is None:
+                continue
+            src.append(s)
+            dst.append(t)
+            edge_type_idx.append(EDGE_TYPE_TO_IDX[e.edge_type.value])
+            edge_step_norm.append(e.step / max(max_steps, 1))
+
+        edge_index = torch.tensor([src, dst], dtype=torch.long)
+        edge_type_onehot = torch.zeros(len(src), len(EDGE_TYPE_LIST))
+        edge_type_onehot[torch.arange(len(src)),
+                         torch.tensor(edge_type_idx)] = 1.0
+        edge_step_t = torch.tensor(edge_step_norm,
+                                   dtype=torch.float32).unsqueeze(1)
+        edge_attr = torch.cat([edge_type_onehot, edge_step_t], dim=1)
+    else:
+        # Single self-loop on the dummy node so shape is consistent.
+        edge_index = torch.tensor([[0], [0]], dtype=torch.long)
+        edge_attr = torch.zeros(1, len(EDGE_TYPE_LIST) + 1)
+
+    return x, edge_index, edge_attr, node_id_to_idx
+

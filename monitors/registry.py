@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseMonitor
 from .feature import FeatureMonitor
+from .graph import GraphMonitor
 from .rules import RulesMonitor
 from .sequence import SequenceMonitor
 from .temporal import TemporalSequenceMonitor
@@ -24,6 +25,7 @@ class MonitorRegistry:
             "feature": FeatureMonitor,
             "sequence": SequenceMonitor,
             "temporal": TemporalSequenceMonitor,
+            "graph": GraphMonitor,
         }
 
     def register(self, name: str, constructor: Any) -> None:
@@ -60,3 +62,13 @@ def make_baselines() -> List[BaseMonitor]:
         default_registry.make("sequence", window=None),
         default_registry.make("temporal", window=10),
     ]
+
+
+def make_proposed() -> BaseMonitor:
+    """Build the proposed graph monitor (Phase 4)."""
+    return default_registry.make("graph")
+
+
+def make_all() -> List[BaseMonitor]:
+    """Build baselines + proposed graph monitor."""
+    return make_baselines() + [make_proposed()]
