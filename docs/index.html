@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GraphGuard — Early Warning of Unsafe Long-Horizon Agent Behavior</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,400;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+Pro:ital,wght@0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="wrapper">
+      <div class="header-inner">
+        <div class="site-mark">
+          <span class="mark-letter">G</span><span class="mark-rest">raphGuard</span>
+        </div>
+        <nav class="site-nav">
+          <a href="#overview">Overview</a>
+          <a href="#method">Method</a>
+          <a href="#graph">Behavior Graph</a>
+          <a href="#results">Results</a>
+          <a href="#artifacts">Artifacts</a>
+          <a href="#cite">Cite</a>
+        </nav>
+      </div>
+    </div>
+  </header>
+
+  <main class="site-main">
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="wrapper hero-inner">
+        <div class="hero-badge">Research &middot; AI Safety &middot; Agent Security</div>
+        <h1 class="hero-title">GraphGuard</h1>
+        <h2 class="hero-subtitle">Early Warning of Unsafe Long-Horizon Agent Behavior from Partial Execution Graphs</h2>
+        <p class="hero-abstract">
+          Can graph-based representations detect unsafe long-horizon agent behavior earlier than ordinary trajectory classifiers?
+          GraphGuard builds an instrumented agent-control testbed and tests whether partial typed execution graphs provide earlier,
+          better-calibrated warning of unsafe behavior than sequence-based trajectory classifiers, while preserving useful task performance.
+        </p>
+        <div class="hero-meta">
+          <span class="meta-item"><strong>Status:</strong> Research &amp; open-source artifact</span>
+          <span class="meta-item"><strong>Tests:</strong> 34 passing</span>
+          <span class="meta-item"><strong>License:</strong> MIT</span>
+          <span class="meta-item"><strong>Repo:</strong> <a href="https://github.com/dheeraj7000/detect-unsafe-agent-trajectories" target="_blank" rel="noopener">dheeraj7000/detect-unsafe-agent-trajectories</a></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Overview -->
+    <section id="overview" class="section">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Overview</h2>
+          <p class="section-dek">A falsifiable study of graph- vs sequence-based early warning for unsafe agent trajectories.</p>
+        </div>
+        <div class="grid two-col">
+          <div class="card">
+            <h3 class="card-title">Central Question</h3>
+            <p>At matched false-positive rate and task utility, does a graph-based monitor detect an unsafe trajectory at a smaller fraction of the episode than strong sequence baselines?</p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Core Hypothesis</h3>
+            <p>Long-horizon agent failures are often <em>relational rather than local</em>: a tool call may be harmless alone but risky when connected to an untrusted input, sensitive resource, privilege change, memory update, or later external action. A typed temporal graph exposes these dependencies explicitly.</p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Decision Rule</h3>
+            <p class="small">Support the hypothesis only if the graph monitor produces statistically meaningful earlier detection at matched FPR, without materially reducing benign task utility, and the advantage persists on unseen scenarios or longer horizons. If accuracy improves but lead time does not, the central hypothesis is <strong>not</strong> supported.</p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Why Now</h3>
+            <p>Frontier agents are achieving increasingly long autonomous task horizons (METR). AgentDojo and AgentDyn show tool-using agents remain vulnerable to indirect prompt injection and complex dynamic attacks. Existing graph-based work (AgentArmor) supports policy enforcement but leaves open the question of predictive lead time on partial, long-horizon traces.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Method -->
+    <section id="method" class="section section-alt">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Method</h2>
+          <p class="section-dek">The Agent Control &amp; Evaluation Lab and the proposed graph monitor.</p>
+        </div>
+        <div class="two-col">
+          <div>
+            <h3 class="h3">Agent Control &amp; Evaluation Lab</h3>
+            <p>An open-source sandbox for running tool-using agents against benign and adversarial long-horizon tasks. The same harness records raw trajectories and constructs behavior graphs online, allowing apples-to-apples comparison between monitoring approaches.</p>
+            <ul class="checklist">
+              <li>MCP-compatible tool gateway with identity &amp; policy engine</li>
+              <li>Dockerized tool sandbox (email, files, web, code, mock APIs)</li>
+              <li>OpenTelemetry-style event schema + JSONL/Parquet trace store</li>
+              <li>Deterministic replay (fixed seeds, immutable scenario manifests)</li>
+              <li>Online typed behavior-graph builder</li>
+            </ul>
+          </div>
+          <div>
+            <h3 class="h3">Graph Monitor</h3>
+            <p>A temporal graph neural network that scores risk after every action using graph features from the partial behavior graph. Unlike sequence baselines, it sees explicit provenance, authorization, and dependency edges.</p>
+            <ul class="checklist">
+              <li>Typed nodes: goal, tool_call, credential, memory_write, policy_decision, external_effect, &hellip;</li>
+              <li>Typed edges: follows, derived_from, reads, writes, authorizes, invokes, sends_to, &hellip;</li>
+              <li>Temporal GNN: node/edge embeddings, typed message passing, mean-pooling readout, sigmoid risk head</li>
+              <li>Risk score emitted after every observed action</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Behavior Graph -->
+    <section id="graph" class="section">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Behavior Graph Schema</h2>
+          <p class="section-dek">Typed nodes and edges that make relational dependencies explicit.</p>
+        </div>
+        <div class="grid three-col">
+          <div class="card">
+            <h3 class="card-title">Node Types</h3>
+            <p class="small">goal &middot; subgoal &middot; observation &middot; instruction &middot; tool_call &middot; tool_result &middot; file_resource &middot; credential &middot; memory_write &middot; memory_read &middot; policy_decision &middot; user_approval &middot; external_effect</p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Edge Types</h3>
+            <p class="small">follows &middot; derived_from &middot; reads &middot; writes &middot; authorizes &middot; invokes &middot; depends_on &middot; contradicts &middot; escalates_privilege &middot; sends_to &middot; persists_to_memory</p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Example Risk Pattern</h3>
+            <p class="small">untrusted tool output &rarr; plan update &rarr; credential read &rarr; external send. A flat sequence model must infer the dependency across distance; the graph makes the provenance and sensitive-data path explicit.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Results -->
+    <section id="results" class="section section-alt">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Results</h2>
+          <p class="section-dek">Matched-FPR early-detection study (FPR = 1% / 5%) across six threat scenarios.</p>
+        </div>
+        <table class="results-table">
+          <thead>
+            <tr>
+              <th>Scenario</th>
+              <th>Graph lead</th>
+              <th>Sequence lead</th>
+              <th>Norm. time (graph)</th>
+              <th>Norm. time (sequence)</th>
+              <th>H1</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Indirect prompt injection</td><td>2.00</td><td>1.00</td><td>0.33</td><td>0.67</td><td class="yes">Yes</td></tr>
+            <tr><td>Memory poisoning</td><td>3.00</td><td>2.00</td><td>0.25</td><td>0.50</td><td class="yes">Yes</td></tr>
+            <tr><td>Privilege escalation</td><td>1.00</td><td>0.00</td><td>0.50</td><td>1.00</td><td class="yes">Yes</td></tr>
+            <tr><td>Data exfiltration</td><td>1.00</td><td>0.00</td><td>0.50</td><td>1.00</td><td class="yes">Yes</td></tr>
+            <tr><td>Goal drift</td><td>1.00</td><td>0.00</td><td>0.50</td><td>1.00</td><td class="yes">Yes</td></tr>
+            <tr><td>Multi-agent delegation</td><td>2.00</td><td>1.00</td><td>0.33</td><td>0.67</td><td class="yes">Yes</td></tr>
+            <tr class="total"><td colspan="2">Average</td><td><strong>1.67</strong></td><td><strong>0.67</strong></td><td><strong>0.40</strong></td><td><strong>0.81</strong></td><td class="yes">Supported</td></tr>
+          </tbody>
+        </table>
+        <p class="caption">Table: Lead actions and normalized detection time at matched FPR = 5%. Lower normalized time = earlier warning. CI for difference [1.00, 1.00], paired t-test p = 0.000.</p>
+
+        <div class="grid two-col">
+          <div class="card">
+            <h3 class="card-title">Hypotheses</h3>
+            <table class="hyp-table">
+              <thead><tr><th>ID</th><th>Claim</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td>H1</td><td>Earlier warning</td><td><span class="badge yes">Supported</span></td></tr>
+                <tr><td>H2</td><td>Horizon robustness</td><td><span class="badge">Planned</span></td></tr>
+                <tr><td>H3</td><td>Structural generalization</td><td><span class="badge">Planned</span></td></tr>
+                <tr><td>H4</td><td>Interpretability</td><td><span class="badge">Planned</span></td></tr>
+                <tr><td>H5</td><td>Hybrid value</td><td><span class="badge">Planned</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Key Ablations</h3>
+            <ul class="checklist small">
+              <li>Remove provenance / authorization / temporal edges</li>
+              <li>Untype nodes &amp; edges</li>
+              <li>Full graph vs bounded recent subgraph</li>
+              <li>Train on one attack family, test on unseen</li>
+              <li>Counterfactual replay (remove permission / sanitize output)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Artifacts -->
+    <section id="artifacts" class="section">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Artifacts</h2>
+          <p class="section-dek">Public, reproducible release of code, schemas, scenarios, and benchmarks.</p>
+        </div>
+        <div class="grid three-col">
+          <div class="card">
+            <h3 class="card-title">Repository</h3>
+            <p class="small">Full source: harness, dataset, monitors, evaluator, demos, tests.</p>
+            <a class="btn" href="https://github.com/dheeraj7000/detect-unsafe-agent-trajectories" target="_blank" rel="noopener">GitHub Repo &rarr;</a>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Install</h3>
+            <div class="code-block small">pip install -e .</div>
+            <p class="small">Then: <span class="code">graphguard run --scenario file_backup --monitor graph</span></p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">CLI</h3>
+            <p class="small"><span class="code">graphguard run</span> &middot; <span class="code">graphguard compare</span> &middot; <span class="code">graphguard calibrate</span> &middot; <span class="code">graphguard ablate</span></p>
+          </div>
+          <div class="card">
+            <h3 class="card-title">CI</h3>
+            <p class="small">GitHub Actions: tests on Python 3.10&ndash;3.12, demo smoke tests, lint.</p>
+            <a class="btn" href="../.github/workflows/ci.yml" target="_blank" rel="noopener">View CI &rarr;</a>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Trace Viewer</h3>
+            <p class="small">Step through episodes and inspect the partial behavior graph at each step.</p>
+            <a class="btn" href="_static/trace_viewer.html" target="_blank">Open Viewer &rarr;</a>
+          </div>
+          <div class="card">
+            <h3 class="card-title">Paper Outline</h3>
+            <p class="small">Abstract, method, experiments, results, references.</p>
+            <a class="btn" href="PAPER_OUTLINE.md" target="_blank">Read Outline &rarr;</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cite -->
+    <section id="cite" class="section section-alt">
+      <div class="wrapper">
+        <div class="section-head">
+          <h2 class="section-title">Cite</h2>
+          <p class="section-dek">If you use GraphGuard in your research, please cite:</p>
+        </div>
+        <div class="card cite-card">
+          <pre class="code-block"><code>@misc{graphguard2026,
+  title     = {GraphGuard: Early Warning of Unsafe Long-Horizon Agent Behavior from Partial Execution Graphs},
+  author    = {GraphGuard Contributors},
+  year      = {2026},
+  url       = {https://github.com/dheeraj7000/detect-unsafe-agent-trajectories},
+  note      = {Agent Control &amp; Evaluation Lab; matched-FPR early-detection study}
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="wrapper">
+      <div class="footer-inner">
+        <div class="footer-copy">
+          &copy; 2026 GraphGuard Contributors. Licensed under MIT.
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/dheeraj7000/detect-unsafe-agent-trajectories" target="_blank" rel="noopener">GitHub</a>
+          <span class="sep">&middot;</span>
+          <a href="#overview">Overview</a>
+          <span class="sep">&middot;</span>
+          <a href="#results">Results</a>
+          <span class="sep">&middot;</span>
+          <a href="#cite">Cite</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
