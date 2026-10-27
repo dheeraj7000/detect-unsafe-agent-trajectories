@@ -1,58 +1,47 @@
 # GraphGuard Release Checklist
 
-**Target:** v0.1.0 public release
+**Target:** v0.1.0
+**Status:** In progress; the repository contains the release scaffolding, but
+validation and release artifacts remain.
 
-## Packaging
-- [ ] `pyproject.toml` — project metadata, dependencies, entry points
-- [ ] `requirements.txt` — core dependencies (pinned)
-- [ ] `requirements-dev.txt` — dev/test dependencies
-- [ ] `LICENSE` — MIT
-- [ ] `pip install .` works from clean checkout
-- [ ] `graphguard` CLI command available after install
-- [ ] `graphguard run --help` shows usage
+## Implemented or present
 
-## Code quality
-- [ ] `python -m pytest tests/` passes (34 tests)
-- [ ] `black --check` passes
-- [ ] `ruff check` passes
-- [ ] `mypy` type check (best-effort)
-- [ ] All demos run: `demo.py`, `demo_phase3.py`, `demo_phase4.py`, `demo_phase5.py`
+- [x] Package metadata, declared dependencies, and `graphguard` console-script entry point in `pyproject.toml`
+- [x] Core and development dependency files
+- [x] MIT license
+- [x] CLI commands: `run`, `compare`, `calibrate`, and `ablate`
+- [x] GitHub Actions workflow for tests, demos, CLI smoke tests, lint, and Python 3.10–3.12
+- [x] Static trace viewer at `docs/_static/trace_viewer.html`
+- [x] Research plan, paper outline, and this checklist
+- [x] Test suite: 34 passed in the available Python 3.13 environment
+- [x] `graphguard --help` and `graphguard run --help` in the current environment
 
-## CI
-- [ ] `.github/workflows/ci.yml` — runs tests on push/PR
-- [ ] CI tests on Python 3.10, 3.11, 3.12
-- [ ] CI runs demos as smoke tests
-- [ ] CI runs CLI smoke tests
+## Still to verify or complete
 
-## Documentation
-- [ ] `README.md` — install + usage instructions (all demo commands)
-- [ ] `docs/GraphGuard_Research_Plan.md` — full research plan (updated through Phase 5)
-- [ ] `docs/PAPER_OUTLINE.md` — paper outline (abstract, method, experiments, results)
-- [ ] `docs/RELEASE_CHECKLIST.md` — this file
-- [ ] `PHASE6_PLAN.md` — Phase 6 plan
-- [ ] `docs/_static/trace_viewer.html` — static trace/graph viewer
+- [ ] Clean-environment package installation and CLI verification
+- [ ] CI results on Python 3.10, 3.11, and 3.12
+- [ ] Black formatting check and Ruff lint check (both currently report issues)
+- [ ] Full demo suite and CLI smoke commands
+- [ ] Trace viewer loading and rendering a representative trace
+- [ ] Run and record the planned H1–H5 experiments; the paper outline's result claims are placeholders until verified
+- [ ] Final research report based on recorded results
+- [ ] Decide whether to include archived traces and trained checkpoints in the release
+- [ ] Create Git tag `v0.1.0`
+- [ ] Publish GitHub release notes and release
 
-## Release artifacts
-- [ ] Git tag `v0.1.0`
-- [ ] GitHub Release with release notes
-- [ ] Archived traces & trained model checkpoints (or download links)
-- [ ] Research report / paper draft
+`python -m graphguard` is not currently supported; use the installed `graphguard`
+console command.
 
-## Demo commands (verified working)
+## Commands to verify before release
+
 ```bash
-# Phase 1: 3 task families + deterministic replay
+python -m pytest tests/ -v
+black --check harness/ dataset/ monitors/ evaluator/ graphguard/ tests/ demo*.py
+ruff check harness/ dataset/ monitors/ evaluator/ graphguard/ tests/ demo*.py
 python demo.py
-
-# Phase 3: baseline monitors + early detection
 python demo_phase3.py
-
-# Phase 4: graph monitor vs sequence baselines
 python demo_phase4.py
-
-# Phase 5: matched-FPR early-detection study
 python demo_phase5.py
-
-# CLI
 graphguard run --scenario file_backup --monitor graph --steps 10
 graphguard compare --scenarios data_exfiltration --monitors graph,sequence --fpr 0.05
 graphguard calibrate --monitor graph --fpr 0.01 0.05

@@ -20,9 +20,9 @@ At matched false-positive rate and task utility, does a graph-based monitor dete
 
 ```
 graphguard-work/
-├── harness/            # Agent Control & Evaluation Lab (Phase 1 ✅)
-├── dataset/            # Labeled benign + adversarial episodes (Phase 2 ✅)
-├── monitors/           # Rules, sequence, graph, hybrid monitors (Phase 3)
+├── harness/            # Agent Control & Evaluation Lab (Phase 1)
+├── dataset/            # Labeled benign + adversarial episodes (Phase 2)
+├── monitors/           # Rules, sequence, temporal, and graph monitors (Phases 3–4)
 ├── evaluator/          # Early-warning evaluation protocol & metrics (Phase 5)
 ├── configs/            # Scenario manifests, hyperparameters, alert thresholds
 ├── docs/               # Research plan, schema, reports
@@ -48,12 +48,14 @@ Support the hypothesis only if the graph monitor produces **statistically meanin
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
-| 1 — Harness | 1–4 | MCP/gateway, sandbox, event schema, replay | ✅ Complete |
-| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
-| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
-| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | ✅ Complete |
-| 5 — Study | 17–22 | Matched-FPR early-detection + ablations | ✅ Complete |
-| 6 — Release | 23–24 | Code, schemas, traces, paper/report | Planned |
+| 1 — Harness | 1–4 | Gateway, sandbox, event schema, replay | Implementation complete |
+| 2 — Dataset | 5–8 | Benign + adversarial episodes and labeling | Implementation complete |
+| 3 — Baselines | 9–12 | Rules, feature, sequence, temporal monitors | Implementation complete |
+| 4 — Graph monitor | 13–16 | Online graph builder and graph monitor | Implementation complete |
+| 5 — Study | 17–22 | Evaluation, ablations, and statistics tooling | Implementation complete; research conclusions not yet established |
+| 6 — Release | 23–24 | Release validation and publication artifacts | In progress |
+
+The test suite currently passes (34 tests in the available Python 3.13 environment). Formatting and lint checks are not yet clean. The study code and paper outline are present, but the outline's empirical claims still need to be verified against recorded experiment results.
 
 ## Phase 1 — Harness (complete)
 
@@ -128,7 +130,7 @@ flat sequence model. `demo_phase4.py` demonstrates calibrated early
 detection across the 6 threat scenarios and compares lead time against
 the sequence baselines.
 
-## Phase 5 — Study (complete)
+## Phase 5 — Study tooling (implemented)
 
 Matched-FPR early-detection study comparing the graph monitor against
 sequence baselines, with hypothesis testing (H1–H5), ablations, and
@@ -157,6 +159,10 @@ Hypothesis evaluation:
 `demo_phase5.py` demonstrates the full study: calibration at FPR=5%, paired
 statistical comparisons (bootstrap CI + paired t-test + Wilcoxon), ablation
 study, and counterfactual replay.
+
+Implementation of the study tooling does not by itself establish H1–H5. No
+empirical conclusion should be treated as supported until experiment outputs
+are recorded, reviewed, and reflected in the paper.
 
 ## How to run
 

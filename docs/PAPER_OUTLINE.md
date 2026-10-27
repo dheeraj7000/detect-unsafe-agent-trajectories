@@ -4,17 +4,20 @@
 
 **Target venues:** IEEE S&P, ACM CCS, USENIX Security, NDSS, or ICLR (ML safety track)
 
+**Status:** Outline only. The results below are placeholders; no hypothesis is
+claimed as supported until experiment outputs have been recorded and reviewed.
+
 ---
 
 ## 1. Abstract
 
-Long-horizon autonomous AI agents are increasingly capable (METR reports frontier models completing multi-hour tasks), yet remain vulnerable to indirect prompt injection, memory poisoning, privilege escalation, and data exfiltration (AgentDojo, AgentDyn). Existing defenses (e.g., AgentArmor) enforce policies at runtime but do not address **predictive lead time** — how early unsafe behavior can be detected before the violation occurs.
+Long-horizon autonomous AI agents can be vulnerable to indirect prompt injection, memory poisoning, privilege escalation, and data exfiltration. Existing defenses may enforce policies at runtime but do not necessarily address **predictive lead time** — how early unsafe behavior can be detected before a violation occurs.
 
-We present GraphGuard, an instrumented agent-control testbed that tests whether **typed temporal behavior graphs** provide earlier, better-calibrated warning of unsafe long-horizon behavior than ordinary trajectory (sequence) classifiers. We build an Agent Control & Evaluation Lab with an MCP-compatible gateway, sandboxed tool execution, and online graph construction, then evaluate six monitor types across six attack scenarios.
+We present GraphGuard, an instrumented agent-control testbed for evaluating whether **typed temporal behavior graphs** provide earlier warning of unsafe long-horizon behavior than ordinary trajectory (sequence) classifiers. The implementation includes an agent-control harness, a gateway, mock sandboxes, dataset-generation and labeling tools, baseline and graph monitors, and evaluation utilities. The planned study compares monitors across six threat scenarios.
 
-At matched false-positive rate (1%/5%) and preserved benign task utility, our experiments show the graph monitor detects unsafe trajectories **earlier** than sequence baselines (lower normalized detection time, more lead actions), with the advantage persisting on longer horizons and unseen attack families. We release the gateway, graph schema, replayable scenarios, benchmark scripts, trace viewer, and trained baselines as a public artifact.
+The evaluation is designed to compare monitors at matched false-positive rates and measure detection lead time, benign task utility, horizon robustness, and generalization. Experiment results and conclusions are pending.
 
-**Key finding:** Explicit provenance, authorization, and dependency structure improves time-to-detection under realistic low-FPR constraints — especially as trajectories grow longer.
+**Results:** To be completed after the planned experiments are run and their outputs are recorded.
 
 ---
 
@@ -91,9 +94,9 @@ At matched false-positive rate (1%/5%) and preserved benign task utility, our ex
 - Counterfactual replay: alter one dependency (remove permission, sanitize output)
 
 ### 5.4 Results
-- H1 supported: graph detects earlier (lower normalized detection time, more lead actions)
-- Statistical comparison: paired t-test, Wilcoxon signed-rank, bootstrap CI for difference
-- Negative-result framing: identify redundant structure and unjustified overhead
+- Pending experiment runs. Report matched-FPR detection time, lead actions,
+  utility, confidence intervals, and significance tests; state whether each
+  hypothesis is supported, rejected, or inconclusive based on those results.
 
 ---
 

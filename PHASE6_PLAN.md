@@ -1,30 +1,35 @@
-# GraphGuard Phase 6 — Release Plan (Weeks 23–24)
+# GraphGuard Phase 6 — Release Plan
 
-**Goal:** Public, reproducible release of GraphGuard as a benchmark artifact.
+**Status:** In progress. The core package, CLI, CI workflow, trace viewer, and
+paper outline exist. Release validation and research-result documentation are
+not complete.
 
 ## Deliverables
 
-| # | Artifact | Description | Status |
-|---|----------|-------------|--------|
-| 1 | Packaging | `pyproject.toml`, `requirements.txt`, `requirements-dev.txt`, MIT LICENSE | To build |
-| 2 | CLI entry point | `python -m graphguard` / `graphguard` command: run episodes, compare monitors, export results | To build |
-| 3 | CI | GitHub Actions: run tests on push/PR, lint, test on Python 3.10+ | To build |
-| 4 | Trace viewer | Static HTML/JS dashboard to load a trace JSON + behavior graph and step through an episode | To build |
-| 5 | Paper/report | `docs/PAPER_OUTLINE.md` + full research report (abstract, method, results, related work) | To build |
-| 6 | Release checklist | `docs/RELEASE_CHECKLIST.md` | To build |
+| # | Artifact | Current status | Remaining work |
+|---|----------|----------------|----------------|
+| 1 | Packaging | `pyproject.toml`, requirements files, and MIT license are present | Verify installation from a clean environment |
+| 2 | CLI | `graphguard` console-script entry point is implemented and available in the current environment | Verify after clean install; `python -m graphguard` is not supported |
+| 3 | CI | `.github/workflows/ci.yml` defines test, demo, CLI, lint, and Python 3.10–3.12 jobs | Confirm current workflow results |
+| 4 | Trace viewer | `docs/_static/trace_viewer.html` is present | Verify it against a representative trace in a browser |
+| 5 | Paper/report | `docs/PAPER_OUTLINE.md` is present as an outline | Run and record experiments; replace placeholder result claims with supported findings |
+| 6 | Release checklist | `docs/RELEASE_CHECKLIST.md` is present | Complete remaining validation and release tasks |
 
-## Success criteria
+## Current validation
 
-- `pip install .` works from a clean checkout
-- `graphguard run --help` shows the CLI
-- `python -m pytest tests/` passes in CI
-- Trace viewer can load a `data/traces/*.jsonl` file and render the episode graph
-- Paper outline covers: abstract, related work (METR, AgentDojo, AgentDyn, AgentArmor), method, experiments (H1–H5), results, discussion
+- `python -m pytest tests/ -q`: **34 passed** in the available Python 3.13 environment.
+- `graphguard --help` and `graphguard run --help`: pass in the current environment.
+- `black --check` and `ruff check`: currently report issues.
+- `python -m graphguard`: not supported; use the installed `graphguard` command.
+- A clean-environment install, the CI matrix, demos, and trace viewer have not
+  been verified as part of this status update.
 
-## Order of work
+## Remaining work
 
-1. Packaging + CLI (foundational — everything else builds on it)
-2. CI (protects the codebase)
-3. Trace viewer (demonstration artifact)
-4. Paper outline + report (publication artifact)
-5. Release checklist + tag v0.1.0
+1. Run and record the planned H1–H5 experiments, including matched-FPR
+   comparisons, utility, horizon/generalization analyses, ablations, and
+   statistical results.
+2. Update the paper outline to report only findings supported by those results.
+3. Resolve formatting and lint findings; verify clean installation, demos,
+   trace viewer, and CI on the supported Python versions.
+4. Prepare release artifacts and create the v0.1.0 tag and GitHub release.

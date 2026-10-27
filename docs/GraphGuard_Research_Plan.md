@@ -24,12 +24,12 @@
 
 | Phase | Weeks | Focus | Status |
 |-------|-------|-------|--------|
-| 1 — Harness | 1–4 | MCP/tool gateway, sandbox, event schema, replay | ✅ Complete |
-| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | ✅ Complete |
-| 3 — Baselines | 9–12 | Rules + feature + sequence monitors | ✅ Complete |
-| 4 — Graph monitor | 13–16 | Online graph builder + GNN/graph-transformer | ✅ Complete |
-| 5 — Study | 17–22 | Matched-FPR early-detection experiments + ablations | ✅ Complete |
-| 6 — Release | 23–24 | Code, schemas, tasks, traces, paper/report | Planned |
+| 1 — Harness | 1–4 | MCP/tool gateway, sandbox, event schema, replay | Implementation complete |
+| 2 — Dataset | 5–8 | Benign + adversarial long-horizon episodes | Implementation complete |
+| 3 — Baselines | 9–12 | Rules, feature, sequence, and temporal monitors | Implementation complete |
+| 4 — Graph monitor | 13–16 | Online graph builder and graph monitor | Implementation complete |
+| 5 — Study | 17–22 | Matched-FPR evaluation, ablations, statistics tooling | Implementation complete; experimental conclusions pending |
+| 6 — Release | 23–24 | Release validation and publication artifacts | In progress |
 
 ---
 
@@ -208,30 +208,35 @@
 
 ---
 
-## 7. Implementation Status & Next Steps (Phase 5)
+## 7. Implementation Status & Next Steps
 
-### Completed (Phases 1–4)
+Implementation for Phases 1–5 is present in the repository. This describes code
+and evaluation tooling, not completion of the planned experiments or validation
+of H1–H5.
 
 | Phase | Deliverable | Location |
 |-------|-------------|----------|
 | 1 — Harness | Agent Control & Evaluation Lab: MCP/gateway, policy engine, mock sandboxes (file/email/code), agent interface, online behavior-graph builder, orchestrator, deterministic replay | `harness/` |
 | 2 — Dataset | Labeled benign + adversarial episodes across 6 threat scenarios; labeling rubric; synthetic variant pairs (provenance/authorization/destination) | `dataset/` |
 | 3 — Baselines | Rules, feature, sequence, temporal monitors; FPR calibration (1%/5%); early-detection metrics | `monitors/` |
-| 4 — Graph monitor | TemporalGraphNN (typed message-passing GNN), GraphMonitor wrapper, graph→tensor conversion | `monitors/graph.py`, `monitors/graph_model.py`, `harness/graph.py` |
+| 4 — Graph monitor | TemporalGraphNN (typed message-passing GNN), GraphMonitor wrapper, graph-to-tensor conversion | `monitors/graph.py`, `monitors/graph_model.py`, `harness/graph.py` |
+| 5 — Study tooling | Study runner, statistics, ablations, counterfactual replay | `evaluator/` |
 
-Tests: **24 passing**. Demos: `demo.py`, `demo_phase3.py`, `demo_phase4.py`.
+The test suite passes **34 tests** in the currently available Python 3.13
+environment. This does not verify the advertised Python 3.10–3.12 CI matrix:
+the configured workflow targets those versions, but its latest run has not
+been confirmed here. The current Black formatting check and Ruff lint check
+report failures.
 
-### Phase 5 — Study (next)
+### Remaining work
 
-1. **Build the matched-FPR evaluation protocol** — run every monitor at every prefix of each test episode; record detection step, lead actions, normalized detection time at FPR = 1% and 5%.
-2. **Run H1–H5 experiments** — earlier warning, horizon robustness, structural generalization, interpretability, hybrid value.
-3. **Key ablations** — remove provenance/authorization/temporal edges; full graph vs. bounded recent subgraph; train on one attack family / test on unseen; counterfactual replay (remove permission / sanitize tool output).
-4. **Statistical rigor** — confidence intervals, significance testing, fixed seeds, immutable scenario manifests.
-5. **Write results** — compare graph vs. sequence baselines on lead time at matched FPR; document whether H1 is supported.
-
-### Phase 6 — Release (planned)
-
-Code, schemas, replayable scenarios, benchmark scripts, trained baselines, dashboard/trace viewer, and concise research report/paper.
+1. Run and record the H1–H5 experiments at matched FPR, including the planned
+   horizon, generalization, ablation, utility, and statistical analyses.
+2. Update `docs/PAPER_OUTLINE.md` with conclusions supported by those recorded
+   results; its present result statements are placeholders, not findings.
+3. Finish release validation: resolve formatting/lint issues, verify packaging
+   from a clean environment, exercise the trace viewer, and confirm CI.
+4. Prepare release artifacts and create the v0.1.0 tag/release when ready.
 
 ---
 
