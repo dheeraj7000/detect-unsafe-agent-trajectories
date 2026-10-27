@@ -15,10 +15,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from harness.graph import BehaviorGraph, graph_to_tensors, NODE_TYPE_LIST, EDGE_TYPE_LIST
 from .base import BaseMonitor, MonitorOutput
@@ -34,10 +32,11 @@ class GraphMonitor(BaseMonitor):
         num_layers: number of message-passing layers.
         lr: learning rate for fitting.
         epochs: training epochs for fitting.
-        batch_size: training batch size.
         max_steps: max episode length (for step normalization).
         device: torch device.
     """
+
+    requires_graph = True
 
     def __init__(
         self,
@@ -46,24 +45,32 @@ class GraphMonitor(BaseMonitor):
         num_layers: int = 3,
         lr: float = 1e-3,
         epochs: int = 50,
-        batch_size: int = 32,
         max_steps: int = 500,
         device: Optional[str] = None,
+        seed: int = 42,
     ):
         super().__init__(name)
         self.hidden = hidden
         self.num_layers = num_layers
         self.lr = lr
         self.epochs = epochs
-        self.batch_size = batch_size
         self.max_steps = max_steps
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.seed = seed
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
 
         # Determine feature dims from schema.
         node_feat_dim = len(NODE_TYPE_LIST) + 1  # onehot + step_norm
         edge_feat_dim = len(EDGE_TYPE_LIST) + 1  # onehot + step_norm
 
-        self.model: TemporalGraphNN = build_model(node_feat_dim, edge_feat_dim)
+        self.model: TemporalGraphNN = build_model(
+            node_feat_dim,
+            edge_feat_dim,
+            hidden=hidden,
+            num_layers=num_layers,
+        )
         self.model.to(self.device)
         self._fitted = False
 

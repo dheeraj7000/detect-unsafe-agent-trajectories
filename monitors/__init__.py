@@ -19,6 +19,7 @@ from .registry import (MonitorRegistry, make_all, make_baselines, make_monitor,
 from .rules import RulesMonitor
 from .sequence import SequenceMonitor
 from .temporal import TemporalSequenceMonitor
+from .transformer import TransformerSequenceMonitor
 
 __all__ = [
     "BaseMonitor",
@@ -32,6 +33,7 @@ __all__ = [
     "RulesMonitor",
     "SequenceMonitor",
     "TemporalSequenceMonitor",
+    "TransformerSequenceMonitor",
     "make_all",
     "make_baselines",
     "make_monitor",

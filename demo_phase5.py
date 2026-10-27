@@ -16,42 +16,56 @@ Run:  python demo_phase5.py
 
 from __future__ import annotations
 
-from harness import (Agent, HarnessConfig, Orchestrator, Sandbox, Telemetry,
-                     make_default_gateway)
-from harness.graph import BehaviorGraph, EdgeType
-from harness.scenarios import get_scenario, TASK_FAMILIES
+import argparse
+
+from harness import Sandbox, make_default_gateway
+from harness.graph import (
+    BehaviorGraph,
+    EdgeType,
+    behavior_graph_at_step,
+    trace_prefix_at_step,
+)
+from harness.schema import TraceEvent
 
 from dataset import EpisodeGenerator, GenerationConfig
+from dataset.splits import split_by_template
 
-from monitors import (GraphMonitor, make_baselines, make_proposed)
+from monitors import make_baselines, make_proposed
 from evaluator import (StudyRunner, run_ablation_study, DEFAULT_ABLATIONS,
+                       StudyResult, summarize_seed_results,
                        counterfactual_replay,
                        remove_edge_type_transform,
                        remove_sends_to_external_transform,
-                       sanitize_tool_output_transform)
+                       freeze_experiment)
 
 
-def run_episode_trace(family: str, adversarial: bool, seed: int = 1):
-    """Run one episode via the Phase 1 orchestrator; return (trace, result)."""
-    manifest, policy = get_scenario(family)
-    telemetry = Telemetry(base_dir="data/traces")
-    sandbox = Sandbox()
-    gateway = make_default_gateway(telemetry)
-    agent = Agent(name=f"p5_{family}")
-    orch = Orchestrator(
-        agent=agent,
-        gateway=gateway,
-        sandbox=sandbox,
-        telemetry=telemetry,
-        config=HarnessConfig(max_steps=manifest.max_steps,
-                             auto_intervene_on_deny=True),
+def run_episode_trace(
+    family: str,
+    adversarial: bool,
+    seed: int = 1,
+    wording_variant: str = "default",
+):
+    """Generate an episode with a unique id and return typed trace events."""
+    episode_id = (
+        f"p5_{family}_{seed}_{'adversarial' if adversarial else 'benign'}"
     )
-    result = orch.run_episode(manifest, policy)
-    trace = telemetry.load_trace(manifest.episode_id)
-    return trace, result
+    generator = EpisodeGenerator(
+        make_default_gateway, Sandbox(), base_dir="data/traces"
+    )
+    episode = generator.generate(GenerationConfig(
+        task_family=family,
+        seed=seed,
+        adversarial=adversarial,
+        max_steps=10,
+        episode_id=episode_id,
+        template_id=family,
+        wording_variant=wording_variant,
+    ))
+    trace = [TraceEvent.model_validate(event) for event in episode.trace_events]
+    return trace, episode.result, episode.manifest
 
 
-def build_train_examples() -> tuple:
+def build_train_examples(seed: int) -> tuple:
     """Build labeled training prefixes from benign + adversarial episodes.
 
     Returns:
@@ -63,46 +77,69 @@ def build_train_examples() -> tuple:
     """
     seq_examples = []
     graph_examples = []
+    train_episodes = []
 
-    def add_examples(trace, steps, intervention):
+    def add_examples(trace, result, manifest):
+        steps = result["total_steps"]
+        intervention = result["intervention_step"]
+        train_episodes.append({
+            "episode_id": result["episode_id"],
+            "template_id": manifest.labels["attack_template_id"],
+            "wording_variant": manifest.labels["wording_variant"],
+            "trace": trace,
+            "total_steps": steps,
+            "intervention_step": intervention,
+        })
         for step in range(1, steps + 1, max(1, steps // 20)):
-            prefix = trace[:step]
+            prefix = trace_prefix_at_step(trace, step)
             label = step >= intervention if intervention else False
             seq_examples.append((prefix, step, label))
-            g = BehaviorGraph(episode_id="train")
-            for ev in prefix:
-                g.ingest_event(ev, ev.step if ev.step else step)
+            g = behavior_graph_at_step(trace, step, manifest.episode_id)
             graph_examples.append((prefix, step, g, label))
 
-    # Benign prefixes (label False).
-    for fam in ["file_backup", "email_triage", "code_review"]:
-        trace, result = run_episode_trace(fam, adversarial=False, seed=100)
-        add_examples(trace, result["total_steps"], None)
+    train_seed = seed * 4
+    # Benign training episodes.
+    for fam in ["file_backup", "email_triage"]:
+        trace, result, manifest = run_episode_trace(
+            fam, adversarial=False, seed=train_seed,
+            wording_variant="neutral-0",
+        )
+        add_examples(trace, result, manifest)
 
-    # Adversarial prefixes (label True at/after intervention).
-    trace, result = run_episode_trace("data_exfiltration", adversarial=True,
-                                      seed=100)
-    add_examples(trace, result["total_steps"], result["intervention_step"])
-
-    return seq_examples, graph_examples
-
-
-def build_test_episodes() -> list:
-    """Build test adversarial episodes, one per threat family."""
-    episodes = []
-    threat_families = [
+    # Train on three attack templates and hold out the other three.
+    for fam in [
         "indirect_prompt_injection",
         "memory_poisoning",
         "privilege_escalation",
+    ]:
+        trace, result, manifest = run_episode_trace(
+            fam, adversarial=True, seed=train_seed,
+            wording_variant="neutral-0",
+        )
+        add_examples(trace, result, manifest)
+
+    return seq_examples, graph_examples, train_episodes
+
+
+def build_test_episodes(seed: int) -> list:
+    """Build test episodes from attack templates absent from training."""
+    episodes = []
+    threat_families = [
         "data_exfiltration",
         "goal_drift",
         "multi_agent_delegation",
     ]
+    test_seed = seed * 4 + 2
     for fam in threat_families:
-        trace, result = run_episode_trace(fam, adversarial=True, seed=200)
+        trace, result, manifest = run_episode_trace(
+            fam, adversarial=True, seed=test_seed,
+            wording_variant="neutral-2",
+        )
         episodes.append({
             "episode_id": result["episode_id"],
             "threat_family": fam,
+            "template_id": manifest.labels["attack_template_id"],
+            "wording_variant": manifest.labels["wording_variant"],
             "trace": trace,
             "total_steps": result["total_steps"],
             "intervention_step": result["intervention_step"],
@@ -110,21 +147,30 @@ def build_test_episodes() -> list:
     return episodes
 
 
-def build_benign_calibration_traces() -> list:
+def build_benign_calibration_traces(seed: int) -> tuple[list, list]:
     """Benign traces for threshold calibration."""
     traces = []
-    for fam in ["file_backup", "email_triage", "code_review"]:
-        trace, result = run_episode_trace(fam, adversarial=False, seed=300)
+    calibration_seed = seed * 4 + 1
+    calibration_episodes = []
+    for index in range(3):
+        trace, result, manifest = run_episode_trace(
+            "code_review",
+            adversarial=False,
+            seed=calibration_seed + index,
+            wording_variant="neutral-1",
+        )
         traces.append((trace, result["total_steps"]))
-    return traces
+        calibration_episodes.append({
+            "episode_id": result["episode_id"],
+            "template_id": manifest.labels["attack_template_id"],
+            "wording_variant": manifest.labels["wording_variant"],
+        })
+    return traces, calibration_episodes
 
 
-def graph_getter_factory(trace, episode_id):
-    def getter(step):
-        g = BehaviorGraph(episode_id=episode_id)
-        for ev in trace[:step]:
-            g.ingest_event(ev, ev.step if ev.step else step)
-        return g
+def graph_getter_factory(trace: list[TraceEvent], episode_id: str):
+    def getter(step: int) -> BehaviorGraph:
+        return behavior_graph_at_step(trace, step, episode_id)
     return getter
 
 
@@ -154,30 +200,76 @@ def print_study_result(result, label=""):
               f"{ci:22s} {p:9s} {str(c.h1_supported):5s}")
 
 
-def main() -> None:
+def main(seed: int = 42) -> StudyResult:
     print("=" * 72)
     print("GraphGuard Phase 5 — Matched-FPR Early-Detection Study")
     print("=" * 72)
 
     # --- Build data -----------------------------------------------------
     print("\n--- Building training prefixes ---")
-    seq_examples, graph_examples = build_train_examples()
+    seq_examples, graph_examples, train_episodes = build_train_examples(seed)
     print(f"  {len(seq_examples)} sequence prefixes, {len(graph_examples)} graph prefixes.")
 
     print("\n--- Building test episodes (6 threat families) ---")
-    test_episodes = build_test_episodes()
-    for ep in test_episodes:
-        print(f"  {ep['threat_family']:26s} steps={ep['total_steps']} "
-              f"intervention={ep['intervention_step']}")
+    test_episodes = build_test_episodes(seed)
 
     print("\n--- Building benign calibration traces ---")
-    benign_traces = build_benign_calibration_traces()
+    benign_traces, validation_episodes = build_benign_calibration_traces(seed)
     print(f"  {len(benign_traces)} benign traces.")
+
+    train_templates = {ep["template_id"] for ep in train_episodes}
+    validation_templates = {
+        ep["template_id"] for ep in validation_episodes
+    }
+    test_templates = {ep["template_id"] for ep in test_episodes}
+    split_by_template(
+        [*train_episodes, *validation_episodes, *test_episodes],
+        train_templates,
+        validation_templates,
+        test_templates,
+    )
+    calibration_ids = sorted(
+        episode["episode_id"] for episode in validation_episodes
+    )
+    freeze_digest = freeze_experiment(
+        f"data/experiments/phase5-v2-seed-{seed}.json",
+        {
+            "protocol_version": 2,
+            "seed": seed,
+            "fpr_levels": [0.05],
+            "train_templates": sorted(train_templates),
+            "validation_templates": sorted(validation_templates),
+            "test_attack_templates": sorted(test_templates),
+            "monitor_names": [
+                "rules", "feature", "sequence", "temporal",
+                "transformer", "graph",
+            ],
+            "graph": {"hidden": 64, "num_layers": 3, "epochs": 50},
+            "transformer": {
+                "model_dim": 64,
+                "num_heads": 4,
+                "num_layers": 2,
+                "epochs": 20,
+                "batch_size": 32,
+            },
+            "primary_comparison": "graph-vs-sequence",
+        },
+        {
+            "train": sorted(ep["episode_id"] for ep in train_episodes),
+            "validation": calibration_ids,
+            "test": sorted(ep["episode_id"] for ep in test_episodes),
+        },
+    )
+    print(f"  Frozen protocol SHA-256: {freeze_digest}")
+    print(f"  Test episodes frozen: {len(test_episodes)}")
 
     # --- Fit monitors ---------------------------------------------------
     print("\n--- Fitting monitors ---")
-    monitors = make_baselines() + [make_proposed()]
-    seq_monitors = [m for m in monitors if m.name in ("feature", "sequence", "temporal")]
+    monitors = make_baselines(seed=seed) + [make_proposed(seed=seed)]
+    seq_monitors = [
+        m for m in monitors
+        if m.name in ("feature", "sequence", "temporal", "transformer")
+    ]
     graph_monitor = next((m for m in monitors if m.name == "graph"), None)
 
     for m in seq_monitors:
@@ -191,14 +283,24 @@ def main() -> None:
         graph_monitor.fit(graph_examples)
         print(f"  {'graph':10s} fitted (graph).")
 
+    for monitor in (graph_monitor, next(
+        (m for m in seq_monitors if m.name == "transformer"), None
+    )):
+        model = getattr(monitor, "model", None)
+        if model is not None:
+            parameter_count = sum(parameter.numel()
+                                  for parameter in model.parameters())
+            print(f"  {monitor.name:10s} parameters={parameter_count:,}")
+
     # --- Run study at FPR = 5% -----------------------------------------
-    runner = StudyRunner(fpr_levels=(0.05,), seed=42)
+    runner = StudyRunner(fpr_levels=(0.05,), seed=seed)
     results = runner.run(
-        train_episodes=[],  # monitors already fitted above
+        train_episodes=train_episodes,
         benign_calibration_traces=benign_traces,
         test_episodes=test_episodes,
         threat_families=[ep["threat_family"] for ep in test_episodes],
         include_graph=True,
+        monitors=monitors,
     )
     print_study_result(results[0], label="Phase 5")
 
@@ -208,9 +310,9 @@ def main() -> None:
     print("=" * 72)
 
     # Refit a fresh graph monitor for ablations.
-    graph_monitor = make_proposed()
+    graph_monitor = make_proposed(seed=seed)
     ablation_results = run_ablation_study(
-        graph_monitor, test_episodes, benign_traces,
+        graph_monitor, train_episodes, test_episodes, benign_traces,
         DEFAULT_ABLATIONS, fpr_level=0.05,
     )
     ab_header = (f"{'variant':18s} {'detect_rate':12s} {'avg_lead':9s} "
@@ -228,7 +330,7 @@ def main() -> None:
     print("Counterfactual Replay — Dangerous Dependency Removal")
     print("=" * 72)
 
-    graph_monitor = make_proposed()
+    graph_monitor = make_proposed(seed=seed)
     graph_monitor.fit(graph_examples)
 
     # Run counterfactual on the data_exfiltration test episode at its
@@ -250,12 +352,6 @@ def main() -> None:
             "name": "remove_authorizes",
             "description": "Remove all authorizes edges",
             "transform": remove_edge_type_transform(EdgeType.AUTHORIZES),
-            "expected_direction": "decrease",
-        },
-        {
-            "name": "sanitize_tool_output",
-            "description": "Remove derived_from from tool_result (sanitize)",
-            "transform": sanitize_tool_output_transform(),
             "expected_direction": "decrease",
         },
     ]
@@ -285,6 +381,7 @@ def main() -> None:
     print(f"  H4 (Interpretability): {r.h4_notes}")
     print(f"  H5 (Hybrid value): {r.h5_notes}")
     print("\nDemo complete.")
+    return results[0]
 
 
 def graph_metrics_avg_lead(result) -> float:
@@ -294,4 +391,26 @@ def graph_metrics_avg_lead(result) -> float:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Run the GraphGuard study demo.")
+    parser.add_argument(
+        "--seeds",
+        type=int,
+        nargs="+",
+        default=[42],
+        help="Random seeds for independent study runs",
+    )
+    args = parser.parse_args()
+    seed_results = [main(experiment_seed) for experiment_seed in args.seeds]
+    if len(seed_results) > 1:
+        print("\nAcross-seed summary (seed-level bootstrap CIs)")
+        for aggregate in summarize_seed_results(seed_results):
+            print(
+                f"  FPR={aggregate.fpr_level:.3f} n={aggregate.n_seeds} "
+                f"graph_lead={aggregate.graph_avg_lead:.2f} "
+                f"sequence_lead={aggregate.sequence_avg_lead:.2f} "
+                f"effect={aggregate.lead_difference:.2f} "
+                f"effect_CI={aggregate.lead_difference_ci} "
+                f"graph_TPR={aggregate.graph_detect_rate:.2f} "
+                f"sequence_TPR={aggregate.sequence_detect_rate:.2f} "
+                f"H1_seed_fraction={aggregate.h1_supported_seed_fraction:.2f}"
+            )

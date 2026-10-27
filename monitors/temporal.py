@@ -90,10 +90,12 @@ class TemporalSequenceMonitor(BaseMonitor):
         name: str = "temporal",
         window: int = 10,
         use_torch: bool = False,
+        seed: int = 42,
     ):
         super().__init__(name)
         self.window = window
         self.use_torch = use_torch and _HAS_TORCH
+        self.seed = seed
         self._sklearn: Optional[MLPClassifier] = None
         self._scaler: Optional[StandardScaler] = None
         self._torch_model: Optional[_TemporalMLP] = None
@@ -134,7 +136,7 @@ class TemporalSequenceMonitor(BaseMonitor):
             self._sklearn = MLPClassifier(
                 hidden_layer_sizes=(64, 32),
                 max_iter=2000,
-                random_state=42,
+                random_state=self.seed,
             )
             self._sklearn.fit(Xs, y)
 
@@ -142,6 +144,7 @@ class TemporalSequenceMonitor(BaseMonitor):
         return self
 
     def _fit_torch(self, X: np.ndarray, y: np.ndarray) -> None:
+        torch.manual_seed(self.seed)
         model = _TemporalMLP(input_dim=X.shape[1])
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         criterion = nn.BCELoss()

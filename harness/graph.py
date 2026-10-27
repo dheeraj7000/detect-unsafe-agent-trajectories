@@ -22,7 +22,7 @@ except ImportError:  # pragma: no cover - networkx optional for prototyping
 import numpy as np
 import torch
 
-from .schema import EdgeType, GraphEdge, GraphNode, NodeType, TraceEvent
+from .schema import EdgeType, EventType, GraphEdge, GraphNode, NodeType, TraceEvent
 
 
 class BehaviorGraph:
@@ -33,6 +33,8 @@ class BehaviorGraph:
         self.nodes: Dict[str, GraphNode] = {}
         self.edges: Dict[str, GraphEdge] = {}
         self._adjacency: Dict[str, List[str]] = {}  # node_id -> [edge_id]
+        self._policy_decisions: Dict[int, str] = {}
+        self._tool_calls: Dict[int, str] = {}
         if nx is not None:
             self._nx = nx.DiGraph()
         else:
@@ -102,8 +104,25 @@ class BehaviorGraph:
                 "arguments": payload.get("arguments", {}),
                 "reasoning": payload.get("reasoning", ""),
             })
+            self._tool_calls[step] = nid
             # Link to previous tool call (follows).
             self._link_previous(NodeType.TOOL_CALL, nid, EdgeType.FOLLOWS, step)
+            policy_id = self._policy_decisions.get(step)
+            if policy_id is not None:
+                self.edge(nid, policy_id, EdgeType.AUTHORIZES, step)
+            arguments = payload.get("arguments", {})
+            if tool == "file_read" and arguments.get("path"):
+                resource_id = self.node(NodeType.FILE_RESOURCE, step, {
+                    "path": arguments["path"],
+                })
+                self.edge(resource_id, nid, EdgeType.READS, step)
+            elif tool == "email_send" and arguments.get("to"):
+                effect_id = self.node(NodeType.EXTERNAL_EFFECT, step, {
+                    "effect": "email_send",
+                    "target": arguments["to"],
+                    "attempted": True,
+                })
+                self.edge(nid, effect_id, EdgeType.SENDS_TO, step)
 
         elif etype == "tool_result":
             nid = self.node(NodeType.TOOL_RESULT, step, {
@@ -111,8 +130,18 @@ class BehaviorGraph:
                 "success": payload.get("success"),
                 "output": payload.get("output"),
             })
-            # Link result to its tool call (derived_from / invokes).
-            self._link_previous(NodeType.TOOL_CALL, nid, EdgeType.DERIVED_FROM, step)
+            call_id = self._tool_calls.get(step)
+            if call_id is not None:
+                self.edge(call_id, nid, EdgeType.DERIVED_FROM, step)
+                if payload.get("success") and payload.get("tool") == "file_write":
+                    tool_call = self.nodes[call_id]
+                    arguments = tool_call.attributes.get("arguments", {})
+                    path = arguments.get("path")
+                    if path:
+                        resource_id = self.node(NodeType.FILE_RESOURCE, step, {
+                            "path": path,
+                        })
+                        self.edge(nid, resource_id, EdgeType.WRITES, step)
 
         elif etype == "observation":
             self.node(NodeType.OBSERVATION, step, {
@@ -120,11 +149,12 @@ class BehaviorGraph:
             })
 
         elif etype == "policy_decision":
-            self.node(NodeType.POLICY_DECISION, step, {
+            nid = self.node(NodeType.POLICY_DECISION, step, {
                 "tool": payload.get("tool"),
                 "decision": payload.get("decision"),
                 "identity": payload.get("identity"),
             })
+            self._policy_decisions[step] = nid
 
         elif etype == "memory_write":
             self.node(NodeType.MEMORY_WRITE, step, {
@@ -155,29 +185,50 @@ class BehaviorGraph:
         if self._nx is not None:
             return [self.nodes[n] for n in self._nx.predecessors(node_id)
                     if n in self.nodes]
-        # Fallback without networkx.
         result = []
-        for e in self.edges.values():
-            if e.target_id == node_id and e.source_id in self.nodes:
-                result.append(self.nodes[e.source_id])
+        for edge in self.edges.values():
+            if edge.target_id == node_id and edge.source_id in self.nodes:
+                result.append(self.nodes[edge.source_id])
         return result
 
     def subgraph_risk_pattern(self) -> List[Dict]:
         """Flag example risk pattern: untrusted tool output -> plan update ->
         credential read -> external send. Returns matching paths."""
-        # Lightweight structural check (placeholder for GNN scoring).
         findings = []
-        for e in self.edges.values():
-            if e.edge_type == EdgeType.SENDS_TO:
+        for edge in self.edges.values():
+            if edge.edge_type == EdgeType.SENDS_TO:
                 findings.append({
                     "pattern": "sensitive_data_exfiltration",
-                    "edge_id": e.edge_id,
-                    "source": e.source_id,
-                    "target": e.target_id,
-                    "step": e.step,
+                    "edge_id": edge.edge_id,
+                    "source": edge.source_id,
+                    "target": edge.target_id,
+                    "step": edge.step,
                 })
         return findings
 
+
+def trace_prefix_at_step(
+    trace: List[TraceEvent],
+    step: int,
+) -> List[TraceEvent]:
+    """Return all recorded events through an action step."""
+    return [event for event in trace if event.step <= step]
+
+
+def behavior_graph_at_step(
+    trace: List[TraceEvent],
+    step: int,
+    episode_id: Optional[str] = None,
+) -> BehaviorGraph:
+    """Reconstruct the partial behavior graph through an action step."""
+    graph = BehaviorGraph(
+        episode_id=episode_id or (trace[0].episode_id if trace else "empty")
+    )
+    for event in trace_prefix_at_step(trace, step):
+        if event.event_type in (EventType.EPISODE_START, EventType.EPISODE_END):
+            continue
+        graph.ingest_event(event, event.step)
+    return graph
 
 # ---------------------------------------------------------------------------
 # Type <-> index mappings for GNN feature encoding
@@ -251,4 +302,3 @@ def graph_to_tensors(graph: BehaviorGraph, max_steps: int = 500):
         edge_attr = torch.zeros(1, len(EDGE_TYPE_LIST) + 1)
 
     return x, edge_index, edge_attr, node_id_to_idx
-

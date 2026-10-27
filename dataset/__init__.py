@@ -3,6 +3,7 @@
 from .generator import EpisodeGenerator, GenerationConfig
 from .store import DatasetStore, save_episode, load_episode
 from .labeler import Labeler, EpisodeLabel
+from .splits import EpisodeSplits, split_by_template
 
 __all__ = [
     "EpisodeGenerator",
@@ -12,4 +13,6 @@ __all__ = [
     "load_episode",
     "Labeler",
     "EpisodeLabel",
+    "EpisodeSplits",
+    "split_by_template",
 ]

@@ -11,9 +11,9 @@ detection time, TPR@FPR) used in Phase 5.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from .base import BaseMonitor
+from .base import BaseMonitor, behavior_graph_at_step, trace_prefix_at_step
 
 
 @dataclass
@@ -28,6 +28,7 @@ def calibrate_monitor(
     monitor: BaseMonitor,
     benign_traces: List[Tuple[List[Any], int]],
     target_fprs: Tuple[float, ...] = (0.01, 0.05),
+    graph_getter: Optional[Callable[[List[Any], int], Any]] = None,
 ) -> CalibrationReport:
     """Calibrate a single monitor on benign traces.
 
@@ -39,7 +40,11 @@ def calibrate_monitor(
     Returns:
         CalibrationReport with thresholds and metadata.
     """
-    thresholds = monitor.calibrate(list(benign_traces), list(target_fprs))
+    thresholds = monitor.calibrate(
+        list(benign_traces),
+        list(target_fprs),
+        graph_getter=graph_getter,
+    )
     return CalibrationReport(
         monitor=monitor.name,
         thresholds=thresholds,
@@ -97,8 +102,13 @@ def evaluate_episode(
     first_fpr: Optional[float] = None
 
     for step in range(1, total_steps + 1):
-        prefix = trace_events[:step]
-        graph = graph_getter(step) if graph_getter else None
+        prefix = trace_prefix_at_step(trace_events, step)
+        if graph_getter is not None:
+            graph = graph_getter(step)
+        elif monitor.requires_graph:
+            graph = behavior_graph_at_step(trace_events, step)
+        else:
+            graph = None
         out = monitor.score(prefix, step, graph=graph)
         if out.alert and first_alert_step is None:
             first_alert_step = step

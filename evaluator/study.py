@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
-from monitors import GraphMonitor, calibrate_monitor, make_baselines, make_proposed
+from monitors import BaseMonitor, calibrate_monitor, make_baselines, make_proposed
 from monitors.calibrator import evaluate_episode
 from evaluator.statistics import (
     bootstrap_ci,
@@ -75,6 +75,80 @@ class StudyResult:
     h5_notes: str
 
 
+@dataclass
+class SeedAggregate:
+    fpr_level: float
+    n_seeds: int
+    graph_avg_lead: float
+    graph_lead_ci: Optional[Tuple[float, float, float]]
+    sequence_avg_lead: float
+    sequence_lead_ci: Optional[Tuple[float, float, float]]
+    lead_difference: float
+    lead_difference_ci: Optional[Tuple[float, float, float]]
+    graph_detect_rate: float
+    sequence_detect_rate: float
+    h1_supported_seed_fraction: float
+
+
+def summarize_seed_results(
+    results_by_seed: List[StudyResult],
+) -> List[SeedAggregate]:
+    """Aggregate one-fpr study results across independent random seeds."""
+    fpr_levels = sorted({result.fpr_level for result in results_by_seed})
+    aggregates = []
+    for fpr in fpr_levels:
+        runs = [result for result in results_by_seed if result.fpr_level == fpr]
+        graph_leads = []
+        sequence_leads = []
+        graph_detect_rates = []
+        sequence_detect_rates = []
+        h1_flags = []
+        for result in runs:
+            graph = next(
+                (metric for metric in result.monitor_metrics
+                 if metric.name == "graph"),
+                None,
+            )
+            sequence = next(
+                (metric for metric in result.monitor_metrics
+                 if metric.name == "sequence"),
+                None,
+            )
+            comparison = next(
+                (item for item in result.comparisons
+                 if item.baseline == "sequence"),
+                None,
+            )
+            if graph is None or sequence is None:
+                continue
+            graph_leads.append(graph.avg_lead)
+            sequence_leads.append(sequence.avg_lead)
+            graph_detect_rates.append(graph.detect_rate)
+            sequence_detect_rates.append(sequence.detect_rate)
+            h1_flags.append(bool(comparison and comparison.h1_supported))
+
+        if not graph_leads:
+            continue
+        differences = [
+            graph_lead - sequence_lead
+            for graph_lead, sequence_lead in zip(graph_leads, sequence_leads)
+        ]
+        aggregates.append(SeedAggregate(
+            fpr_level=fpr,
+            n_seeds=len(graph_leads),
+            graph_avg_lead=float(np.mean(graph_leads)),
+            graph_lead_ci=bootstrap_ci(graph_leads, seed=42),
+            sequence_avg_lead=float(np.mean(sequence_leads)),
+            sequence_lead_ci=bootstrap_ci(sequence_leads, seed=42),
+            lead_difference=float(np.mean(differences)),
+            lead_difference_ci=bootstrap_ci(differences, seed=42),
+            graph_detect_rate=float(np.mean(graph_detect_rates)),
+            sequence_detect_rate=float(np.mean(sequence_detect_rates)),
+            h1_supported_seed_fraction=float(np.mean(h1_flags)),
+        ))
+    return aggregates
+
+
 class StudyRunner:
     """Runs the matched-FPR early-detection study."""
 
@@ -93,6 +167,7 @@ class StudyRunner:
         test_episodes: List[dict],
         threat_families: List[str],
         include_graph: bool = True,
+        monitors: Optional[List[BaseMonitor]] = None,
     ) -> List[StudyResult]:
         """Run the full study at each FPR level.
 
@@ -113,9 +188,41 @@ class StudyRunner:
         results = []
 
         # Build monitors.
-        monitors = make_baselines()
-        if include_graph:
-            monitors.append(make_proposed())
+        use_supplied_monitors = monitors is not None
+        monitors = (
+            list(monitors) if monitors is not None else make_baselines(self.seed)
+        )
+        if include_graph and not any(m.name == "graph" for m in monitors):
+            monitors.append(make_proposed(self.seed))
+
+        if not use_supplied_monitors and not train_episodes:
+            raise ValueError("Provide training episodes or fitted monitor instances.")
+        if train_episodes:
+            training_ids = {
+                episode["episode_id"] for episode in train_episodes
+            }
+            test_ids = {episode["episode_id"] for episode in test_episodes}
+            calibration_ids = {
+                trace[0].episode_id
+                for trace, _ in benign_calibration_traces
+                if trace
+            }
+            if training_ids & test_ids or calibration_ids & (training_ids | test_ids):
+                raise ValueError(
+                    "Training, calibration, and test episode IDs must be disjoint."
+                )
+            train_templates = {
+                episode["template_id"]
+                for episode in train_episodes if episode.get("template_id")
+            }
+            test_templates = {
+                episode["template_id"]
+                for episode in test_episodes if episode.get("template_id")
+            }
+            if train_templates & test_templates:
+                raise ValueError(
+                    "Attack templates must be disjoint between train and test."
+                )
 
         # Fit all monitors on training data (skip if already fitted).
         for m in monitors:
@@ -127,6 +234,11 @@ class StudyRunner:
                             examples.append(ex)
                     if examples:
                         m.fit(examples)
+                if (hasattr(m, "fit")
+                        and not getattr(m, "_fitted", False)):
+                    raise ValueError(
+                        f"Monitor {m.name!r} is unfitted and has no training examples."
+                    )
 
         for fpr in self.fpr_levels:
             result = self._run_at_fpr(
@@ -165,11 +277,9 @@ class StudyRunner:
                 episode_id = ep["episode_id"]
 
                 def graph_getter(step, tr=trace, eid=episode_id):
-                    from harness.graph import BehaviorGraph
-                    g = BehaviorGraph(episode_id=eid)
-                    for ev in tr[:step]:
-                        g.ingest_event(ev, ev.step if ev.step else step)
-                    return g
+                    from harness.graph import behavior_graph_at_step
+
+                    return behavior_graph_at_step(tr, step, eid)
 
                 metrics = evaluate_episode(
                     m, trace, steps, intervention, fpr_level=fpr,
@@ -188,11 +298,11 @@ class StudyRunner:
                 })
                 if metrics.detected:
                     detected_flags.append(True)
-                    lead_values.append(metrics.lead_actions)
                     if metrics.normalized_detection_time is not None:
                         norm_time_values.append(metrics.normalized_detection_time)
                 else:
                     detected_flags.append(False)
+                lead_values.append(metrics.lead_actions or 0)
 
             mm = MonitorMetrics(
                 name=m.name,
@@ -215,7 +325,7 @@ class StudyRunner:
                              None)
         baseline_metrics = [m for m in monitor_metrics
                             if m.name in ("rules", "feature", "sequence",
-                                          "temporal")]
+                                          "temporal", "transformer")]
 
         # Build paired per-episode lead values for comparison.
         # Pair by episode_id.
@@ -235,9 +345,10 @@ class StudyRunner:
             for ep_id in common_eps:
                 gp = graph_by_ep[ep_id]
                 bp = baseline_by_ep[ep_id]
-                if gp["lead_actions"] is not None and bp["lead_actions"] is not None:
-                    graph_leads.append(gp["lead_actions"])
-                    baseline_leads.append(bp["lead_actions"])
+                # Count a miss as zero warning lead rather than dropping it
+                # from the paired comparison.
+                graph_leads.append(gp["lead_actions"] or 0)
+                baseline_leads.append(bp["lead_actions"] or 0)
 
             ci_diff = None
             tt = None
@@ -269,7 +380,17 @@ class StudyRunner:
                 h1_supported=h1,
             ))
 
-        h1_supported = any(c.h1_supported for c in comparisons)
+        sequence_comparison = next(
+            (comparison for comparison in comparisons
+             if comparison.baseline == "sequence"),
+            None,
+        )
+        h1_supported = bool(
+            sequence_comparison
+            and sequence_comparison.h1_supported
+            and sequence_comparison.graph_detect_rate
+            >= sequence_comparison.baseline_detect_rate
+        )
 
         # Hypothesis notes (interpretation, to be filled in by researcher).
         h2_notes = ("Horizon robustness: compare avg_norm_time across episode "

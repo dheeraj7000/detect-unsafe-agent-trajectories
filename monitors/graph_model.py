@@ -6,7 +6,7 @@ can be added later).
 
 Architecture:
   1. Node embedding: node_type embedding + step positional encoding
-  2. Edge embedding: edge_type embedding
+  2. Edge embedding: edge_type embedding + projected edge type/time features
   3. K rounds of typed message passing (aggregate neighbor messages,
      weighted by edge type)
   4. Global mean-pooling readout over all nodes
@@ -38,19 +38,17 @@ class TypedMessagePassing(nn.Module):
     """One round of typed message passing.
 
     For each edge (s -> t) with type r, the message is:
-        m_{s->t} = edge_transform_r(h_s)
+        m_{s->t} = Linear(concat(h_s, edge_embedding))
     Node t aggregates incoming messages by sum, then updates:
         h_t' = GRU(h_t, sum_incoming)  or  MLP(concat(h_t, agg))
     """
 
-    def __init__(self, node_dim: int, edge_type_dim: int, hidden: int = 64):
+    def __init__(self, node_dim: int, edge_dim: int, hidden: int = 64):
         super().__init__()
         self.node_dim = node_dim
         self.hidden = hidden
 
-        # Per-edge-type message transform: shared linear + edge-type bias.
-        self.msg_linear = nn.Linear(node_dim, hidden, bias=False)
-        self.edge_bias = nn.Embedding(len(EDGE_TYPE_LIST), hidden)
+        self.msg_linear = nn.Linear(node_dim + edge_dim, hidden)
 
         # Update: combine current node state with aggregated messages.
         self.update_gru = nn.GRUCell(hidden, node_dim)
@@ -59,12 +57,12 @@ class TypedMessagePassing(nn.Module):
         self,
         h: torch.Tensor,
         edge_index: torch.Tensor,
-        edge_type_idx: torch.Tensor,
+        edge_emb: torch.Tensor,
     ) -> torch.Tensor:
         """Args:
             h: (num_nodes, node_dim)
             edge_index: (2, num_edges)
-            edge_type_idx: (num_edges,)
+            edge_emb: (num_edges, edge_dim), including edge type and time.
         Returns:
             h_updated: (num_nodes, node_dim)
         """
@@ -75,9 +73,7 @@ class TypedMessagePassing(nn.Module):
         src = edge_index[0]
         dst = edge_index[1]
 
-        # Message from source node, biased by edge type.
-        msg = self.msg_linear(h[src])  # (num_edges, hidden)
-        msg = msg + self.edge_bias(edge_type_idx)
+        msg = self.msg_linear(torch.cat([h[src], edge_emb], dim=1))
 
         # Aggregate by sum into destination nodes.
         agg = torch.zeros(num_nodes, self.hidden, device=h.device,
@@ -102,6 +98,10 @@ class TemporalGraphNN(nn.Module):
         super().__init__()
         self.hidden = hidden
         self.num_layers = num_layers
+        if hidden < 2 or hidden % 2:
+            raise ValueError("hidden must be an even integer greater than or equal to 2")
+        if num_layers < 1:
+            raise ValueError("num_layers must be at least 1")
 
         # Node-type and edge-type embeddings.
         self.node_type_embed = nn.Embedding(len(NODE_TYPE_LIST), hidden // 2)
@@ -113,7 +113,7 @@ class TemporalGraphNN(nn.Module):
 
         # Message passing layers.
         self.mp_layers = nn.ModuleList([
-            TypedMessagePassing(hidden, len(EDGE_TYPE_LIST), hidden=hidden)
+            TypedMessagePassing(hidden, hidden, hidden=hidden)
             for _ in range(num_layers)
         ])
 
@@ -147,7 +147,6 @@ class TemporalGraphNN(nn.Module):
         # ---- Node embeddings -------------------------------------------
         # x columns: [node_type_onehot (13), step_norm (1)]
         node_type_onehot = x[:, : len(NODE_TYPE_LIST)]
-        step_norm = x[:, len(NODE_TYPE_LIST):]
 
         node_type_idx = node_type_onehot.argmax(dim=1)
         h = torch.cat([
@@ -163,13 +162,11 @@ class TemporalGraphNN(nn.Module):
                 self.edge_type_embed(edge_type_idx),
                 self.edge_in_proj(edge_attr),
             ], dim=1)  # (num_edges, hidden)
-        else:
-            edge_emb = None
 
         # ---- Message passing -------------------------------------------
         for mp in self.mp_layers:
             if edge_index.size(1) > 0:
-                h = mp(h, edge_index, edge_type_idx)
+                h = mp(h, edge_index, edge_emb)
 
         # ---- Readout: global mean pooling -------------------------------
         graph_emb = h.mean(dim=0, keepdim=True)  # (1, hidden)
@@ -180,11 +177,16 @@ class TemporalGraphNN(nn.Module):
         return risk.squeeze(0)  # (1,)
 
 
-def build_model(node_feat_dim: int, edge_feat_dim: int) -> TemporalGraphNN:
-    """Factory: build a TemporalGraphNN with default hyperparameters."""
+def build_model(
+    node_feat_dim: int,
+    edge_feat_dim: int,
+    hidden: int = 64,
+    num_layers: int = 3,
+) -> TemporalGraphNN:
+    """Factory: build a TemporalGraphNN with configurable architecture."""
     return TemporalGraphNN(
         node_feat_dim=node_feat_dim,
         edge_feat_dim=edge_feat_dim,
-        hidden=64,
-        num_layers=3,
+        hidden=hidden,
+        num_layers=num_layers,
     )

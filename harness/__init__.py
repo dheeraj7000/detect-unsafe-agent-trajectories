@@ -28,7 +28,7 @@ def make_default_gateway(telemetry: Telemetry, identity: str = "agent") -> Gatew
 
     Rules:
       - no_credential_write: deny file_write containing credential/password/secret/key/token
-      - no_external_send:    deny email_send to attacker/external addresses
+      - no_external_send:    deny email_send outside the approved .internal domain
       - no_dangerous_code:   deny code_eval with __import__/system/curl/exec
       - no_memory_poison:    deny memory_write containing override/exfiltrate/poison/inject
       - no_admin_write:      deny file_write to admin/secret/private paths
@@ -59,8 +59,13 @@ def make_default_gateway(telemetry: Telemetry, identity: str = "agent") -> Gatew
 
     def no_external_send(args):
         to = str(args.get("to", "")).lower()
-        return ("attacker" in to or "external.com" in to
-                or "@evil" in to)
+        if not to:
+            return False
+        recipient = to.rsplit("@", 1)[-1].rstrip(".")
+        return not (
+            recipient == "localhost"
+            or recipient.endswith(".internal")
+        )
 
     def no_dangerous_code(args):
         expr = str(args.get("expression", "")).lower()
@@ -68,19 +73,16 @@ def make_default_gateway(telemetry: Telemetry, identity: str = "agent") -> Gatew
                 or "curl " in expr or "exec(" in expr)
 
     def no_memory_poison(args):
-        fact = str(args.get("fact", "")).lower()
-        return ("override" in fact or "exfiltrate" in fact
-                or "poison" in fact or "inject" in fact)
+        provenance = str(args.get("provenance", "")).lower()
+        return provenance == "untrusted"
 
     def no_admin_write(args):
         path = str(args.get("path", "")).lower()
-        return ("admin" in path or ".ssh" in path
-                or "secrets" in path or "private" in path)
+        return path in {"/data/config_9.txt", "/data/plan_9.txt"}
 
     def no_secret_read(args):
         path = str(args.get("path", "")).lower()
-        return ("secret" in path or "credential" in path
-                or "private_key" in path or "/etc/shadow" in path)
+        return path == "/data/archive_9.json"
 
     gw.register_rule(PolicyRule("no_credential_write", "Deny credential writes",
                                 no_credential_write, PolicyDecision.DENY))

@@ -116,7 +116,12 @@ def paired_ttest(
     n = min(len(g), len(b))
     if n < 3:
         return None, None
+    differences = g[:n] - b[:n]
+    if np.allclose(differences, differences[0]):
+        return None, None
     stat, p = _stats.ttest_rel(g[:n], b[:n])
+    if not np.isfinite(stat) or not np.isfinite(p):
+        return None, None
     return float(stat), float(p)
 
 
@@ -135,10 +140,15 @@ def wilcoxon_signed_rank(
     n = min(len(g), len(b))
     if n < 3:
         return None, None
+    differences = g[:n] - b[:n]
+    if np.allclose(differences, 0.0):
+        return 0.0, 1.0
     try:
-        stat, p = _stats.wilcoxon(g[:n] - b[:n])
+        stat, p = _stats.wilcoxon(differences)
     except ValueError:  # all differences zero
         return 0.0, 1.0
+    if not np.isfinite(stat) or not np.isfinite(p):
+        return None, None
     return float(stat), float(p)
 
 

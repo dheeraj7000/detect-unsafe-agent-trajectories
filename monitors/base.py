@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from harness.schema import TraceEvent
 
@@ -27,6 +27,8 @@ class MonitorOutput:
 
 class BaseMonitor(ABC):
     """Abstract monitor interface."""
+
+    requires_graph = False
 
     def __init__(self, name: str):
         self.name = name
@@ -75,6 +77,7 @@ class BaseMonitor(ABC):
         self,
         benign_traces: List[Tuple[List[TraceEvent], int]],
         target_fprs: List[float] = (0.01, 0.05),
+        graph_getter: Optional[Callable[[List[TraceEvent], int], Any]] = None,
     ) -> Dict[float, float]:
         """Calibrate alert thresholds on benign traces.
 
@@ -93,8 +96,13 @@ class BaseMonitor(ABC):
         all_scores: List[float] = []
         for trace, total_steps in benign_traces:
             for step in range(1, total_steps + 1):
-                prefix = trace[:step]
-                score = float(self.score_prefix(prefix, step))
+                prefix = trace_prefix_at_step(trace, step)
+                graph = None
+                if graph_getter is not None:
+                    graph = graph_getter(trace, step)
+                elif self.requires_graph:
+                    graph = behavior_graph_at_step(trace, step)
+                score = float(self.score_prefix(prefix, step, graph=graph))
                 all_scores.append(score)
 
         if not all_scores:
@@ -137,3 +145,15 @@ class BaseMonitor(ABC):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"{self.__class__.__name__}(name={self.name!r}, calibrated={self._calibrated})"
+
+
+def trace_prefix_at_step(trace: List[TraceEvent], step: int) -> List[TraceEvent]:
+    from harness.graph import trace_prefix_at_step as get_prefix
+
+    return get_prefix(trace, step)
+
+
+def behavior_graph_at_step(trace: List[TraceEvent], step: int):
+    from harness.graph import behavior_graph_at_step as build_graph
+
+    return build_graph(trace, step)

@@ -16,15 +16,13 @@ import sys
 from typing import List, Optional
 
 from harness import (
-    Agent,
-    HarnessConfig,
-    Orchestrator,
     Sandbox,
-    Telemetry,
     make_default_gateway,
 )
-from harness.graph import BehaviorGraph
-from harness.scenarios import get_scenario, TASK_FAMILIES
+from harness.graph import BehaviorGraph, behavior_graph_at_step, trace_prefix_at_step
+from harness.scenarios import TASK_FAMILIES
+from harness.schema import TraceEvent
+from dataset import EpisodeGenerator, GenerationConfig
 
 from monitors import (
     GraphMonitor,
@@ -32,19 +30,15 @@ from monitors import (
     RulesMonitor,
     SequenceMonitor,
     TemporalSequenceMonitor,
+    TransformerSequenceMonitor,
     calibrate_monitor,
     evaluate_episode,
-    make_baselines,
-    make_proposed,
 )
 
 from evaluator import (
     run_ablation_study,
     DEFAULT_ABLATIONS,
 )
-from evaluator.statistics import bootstrap_ci, detect_rate
-
-
 # ---------------------------------------------------------------------------
 # Monitor factory
 # ---------------------------------------------------------------------------
@@ -54,8 +48,27 @@ MONITOR_REGISTRY = {
     "feature": lambda: FeatureMonitor(name="feature"),
     "sequence": lambda: SequenceMonitor(name="sequence", window=None),
     "temporal": lambda: TemporalSequenceMonitor(name="temporal", window=10),
+    "transformer": lambda: TransformerSequenceMonitor(name="transformer"),
     "graph": lambda: GraphMonitor(name="graph", hidden=64, num_layers=3, epochs=25),
 }
+
+
+def _make_monitor(name: str, seed: int = 42):
+    if name == "graph":
+        return GraphMonitor(
+            name="graph", hidden=64, num_layers=3, epochs=25, seed=seed
+        )
+    if name == "temporal":
+        return TemporalSequenceMonitor(name="temporal", window=10, seed=seed)
+    if name == "transformer":
+        return TransformerSequenceMonitor(name="transformer", seed=seed)
+    return MONITOR_REGISTRY[name]()
+DEFAULT_TRAIN_SCENARIOS = (
+    "indirect_prompt_injection,memory_poisoning,privilege_escalation"
+)
+DEFAULT_TEST_SCENARIOS = (
+    "data_exfiltration,goal_drift,multi_agent_delegation"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -97,12 +110,16 @@ def build_parser() -> argparse.ArgumentParser:
         "compare", help="Compare multiple monitors across scenarios",
     )
     p_cmp.add_argument(
-        "--scenarios", type=str, default=",".join(TASK_FAMILIES),
+        "--scenarios", type=str, default=DEFAULT_TEST_SCENARIOS,
         help="Comma-separated task families",
     )
     p_cmp.add_argument(
         "--monitors", type=str, default=",".join(MONITOR_REGISTRY.keys()),
         help="Comma-separated monitor names",
+    )
+    p_cmp.add_argument(
+        "--train-scenarios", type=str, default=DEFAULT_TRAIN_SCENARIOS,
+        help="Comma-separated training attack families, disjoint from test",
     )
     p_cmp.add_argument(
         "--fpr", type=float, default=0.05, help="False-positive rate for calibration",
@@ -128,12 +145,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--fpr", type=float, nargs="+", default=[0.01, 0.05],
         help="False-positive rates to target",
     )
+    p_cal.add_argument("--seed", type=int, default=1, help="Random seed")
 
     # ---- ablate -----------------------------------------------------------
     p_abl = sub.add_parser("ablate", help="Run graph ablation study")
     p_abl.add_argument(
-        "--scenarios", type=str, default=",".join(TASK_FAMILIES),
+        "--scenarios", type=str, default=DEFAULT_TEST_SCENARIOS,
         help="Comma-separated task families for test episodes",
+    )
+    p_abl.add_argument(
+        "--train-scenarios", type=str, default=DEFAULT_TRAIN_SCENARIOS,
+        help="Comma-separated attack families for training (disjoint from test)",
     )
     p_abl.add_argument(
         "--fpr", type=float, default=0.05, help="False-positive rate for calibration",
@@ -152,61 +174,141 @@ def build_parser() -> argparse.ArgumentParser:
 # Helpers
 # ---------------------------------------------------------------------------
 
-def run_episode_trace(family: str, adversarial: bool, seed: int = 1):
+def run_episode_trace(
+    family: str,
+    adversarial: bool,
+    seed: int = 1,
+    max_steps: Optional[int] = None,
+    wording_variant: str = "default",
+):
     """Run one episode via the Phase 1 orchestrator; return (trace, result)."""
-    manifest, policy = get_scenario(family)
-    telemetry = Telemetry(base_dir="data/traces")
-    sandbox = Sandbox()
-    gateway = make_default_gateway(telemetry)
-    agent = Agent(name=f"cli_ep_{family}")
-    orch = Orchestrator(
-        agent=agent,
-        gateway=gateway,
-        sandbox=sandbox,
-        telemetry=telemetry,
-        config=HarnessConfig(max_steps=manifest.max_steps,
-                             auto_intervene_on_deny=True),
+    episode_id = (
+        f"cli_{family}_{seed}_{'adversarial' if adversarial else 'benign'}"
     )
-    result = orch.run_episode(manifest, policy)
-    trace = telemetry.load_trace(manifest.episode_id)
-    return trace, result
+    episode = EpisodeGenerator(
+        make_default_gateway, Sandbox(), base_dir="data/traces"
+    ).generate(GenerationConfig(
+        task_family=family,
+        seed=seed,
+        adversarial=adversarial,
+        max_steps=max_steps or 10,
+        episode_id=episode_id,
+        template_id=family,
+        wording_variant=wording_variant,
+    ))
+    trace = [
+        TraceEvent.model_validate(event) for event in episode.trace_events
+    ]
+    return trace, episode.result
 
 
 def _graph_getter_factory(trace: list, episode_id: str):
-    """Return a callable(step) -> BehaviorGraph reconstructed from the first
-    `step` telemetry events."""
+    """Return a callable(step) -> graph reconstructed through an action step."""
     def getter(step: int) -> BehaviorGraph:
-        g = BehaviorGraph(episode_id=episode_id)
-        for ev in trace[:step]:
-            g.ingest_event(ev, ev.step if ev.step else step)
-        return g
+        return behavior_graph_at_step(trace, step, episode_id)
     return getter
 
 
-def _run_single_episode(scenario: str, adversarial: bool, seed: int,
-                        max_steps: int, monitor_name: str, fpr: float):
-    manifest, policy = get_scenario(scenario)
-    manifest.max_steps = max_steps
-
-    telemetry = Telemetry(base_dir="data/traces")
-    sandbox = Sandbox()
-    gateway = make_default_gateway(telemetry)
-    agent = Agent(name=f"cli_{scenario}")
-    orch = Orchestrator(
-        agent=agent,
-        gateway=gateway,
-        sandbox=sandbox,
-        telemetry=telemetry,
-        config=HarnessConfig(max_steps=max_steps, auto_intervene_on_deny=True),
+def _build_training_examples(families: List[str], seed: int):
+    examples = []
+    episodes = [
+        (family, False, seed + index)
+        for index, family in enumerate(
+            ("file_backup", "email_triage")
+        )
+    ]
+    episodes.extend(
+        (family, True, seed + 10 + index)
+        for index, family in enumerate(families)
     )
-    result = orch.run_episode(manifest, policy)
-    trace = telemetry.load_trace(manifest.episode_id)
+    for family, adversarial, episode_seed in episodes:
+        trace, result = run_episode_trace(
+            family, adversarial, seed=episode_seed,
+            wording_variant="neutral-0",
+        )
+        for step in range(1, result["total_steps"] + 1):
+            prefix = trace_prefix_at_step(trace, step)
+            graph = behavior_graph_at_step(trace, step, result["episode_id"])
+            label = bool(
+                result["intervention_step"]
+                and step >= result["intervention_step"]
+            )
+            examples.append((prefix, step, graph, label))
+    return examples
 
-    monitor = MONITOR_REGISTRY[monitor_name]()
-    # Calibrate on the episode's own prefixes (simplified demo calibration).
-    calibrate_monitor(monitor, [(trace, result["total_steps"])], target_fprs=(fpr,))
 
-    gg = _graph_getter_factory(trace, manifest.episode_id)
+def _build_episode_records(families: List[str], seed: int):
+    records = []
+    specs = [
+        (family, False, seed + index)
+        for index, family in enumerate(
+            ("file_backup", "email_triage")
+        )
+    ]
+    specs.extend(
+        (family, True, seed + 10 + index)
+        for index, family in enumerate(families)
+    )
+    for family, adversarial, episode_seed in specs:
+        trace, result = run_episode_trace(
+            family, adversarial, seed=episode_seed,
+            wording_variant="neutral-0",
+        )
+        records.append({
+            "episode_id": result["episode_id"],
+            "template_id": family,
+            "trace": trace,
+            "total_steps": result["total_steps"],
+            "intervention_step": result["intervention_step"],
+        })
+    return records
+
+
+def _run_single_episode(
+    scenario: str,
+    adversarial: bool,
+    seed: int,
+    max_steps: int,
+    monitor_name: str,
+    fpr: float,
+):
+    trace, result = run_episode_trace(
+        scenario, adversarial, seed=seed, max_steps=max_steps
+    )
+    monitor = _make_monitor(monitor_name, seed)
+    if hasattr(monitor, "fit"):
+        training = _build_training_examples(
+            [family for family in (
+                "indirect_prompt_injection",
+                "memory_poisoning",
+                "privilege_escalation",
+            ) if family != scenario],
+            seed + 10,
+        )
+        if training:
+            monitor.fit(training if monitor_name == "graph" else [
+                (prefix, step, label)
+                for prefix, step, _graph, label in training
+            ])
+    benign = [
+        run_episode_trace(
+            family,
+            False,
+            seed + 100 + index,
+            wording_variant="neutral-1",
+        )
+        for index, family in enumerate(
+            ("code_review",)
+        )
+    ]
+    calibrate_monitor(
+        monitor,
+        [(events, result["total_steps"]) for events, result in benign],
+        target_fprs=(fpr,),
+    )
+
+    gg = _graph_getter_factory(trace, result["episode_id"])
+    graph = gg(result["total_steps"])
     metrics = evaluate_episode(
         monitor, trace, result["total_steps"],
         result["intervention_step"], fpr_level=fpr, graph_getter=gg,
@@ -226,41 +328,80 @@ def _run_single_episode(scenario: str, adversarial: bool, seed: int,
             "first_alert_score": metrics.first_alert_score,
         },
         "trace_events": len(trace),
-        "graph_nodes": len(orch.graph.nodes) if orch.graph else 0,
-        "graph_edges": len(orch.graph.edges) if orch.graph else 0,
+        "graph_nodes": len(graph.nodes),
+        "graph_edges": len(graph.edges),
     }
 
 
-def _compare(scenarios: List[str], monitors: List[str], fpr: float,
-             seed: int):
+def _compare(
+    scenarios: List[str],
+    monitors: List[str],
+    fpr: float,
+    seed: int,
+    train_scenarios: List[str],
+):
+    overlap = set(scenarios) & set(train_scenarios)
+    if overlap:
+        raise ValueError(
+            f"Training and test scenarios must be disjoint: {sorted(overlap)}"
+        )
+    train_templates = set(train_scenarios) | {"file_backup", "email_triage"}
+    validation_templates = {"code_review"}
+    test_templates = set(scenarios)
+    if (
+        train_templates & validation_templates
+        or train_templates & test_templates
+        or validation_templates & test_templates
+    ):
+        raise ValueError(
+            "Training, calibration, and test templates must be disjoint."
+        )
+    train_examples = _build_training_examples(train_scenarios, seed + 100)
+    benign_traces = [
+        run_episode_trace(
+            family,
+            False,
+            seed + 200 + index,
+            wording_variant="neutral-1",
+        )
+        for index, family in enumerate(
+            ("code_review",)
+        )
+    ]
     results = []
-    for scenario in scenarios:
-        trace, result = run_episode_trace(scenario, adversarial=True, seed=seed)
+    for scenario_index, scenario in enumerate(scenarios):
+        trace, result = run_episode_trace(
+            scenario,
+            adversarial=True,
+            seed=seed + 300 + scenario_index,
+            wording_variant="neutral-2",
+        )
         steps = result["total_steps"]
         intervention = result["intervention_step"]
 
         for mon_name in monitors:
-            monitor = MONITOR_REGISTRY[mon_name]()
-            # Build training prefixes labeled at/after intervention.
-            examples = []
-            for step in range(1, steps + 1, max(1, steps // 20)):
-                g = BehaviorGraph(episode_id=result["episode_id"])
-                for ev in trace[:step]:
-                    g.ingest_event(ev, ev.step if ev.step else step)
-                label = step >= intervention if intervention else False
-                if mon_name == "graph":
-                    examples.append((trace[:step], step, g, label))
-                else:
-                    examples.append((trace[:step], step, label))
-            monitor.fit(examples)
+            monitor = _make_monitor(mon_name, seed)
+            if hasattr(monitor, "fit"):
+                examples = (
+                    train_examples
+                    if mon_name == "graph"
+                    else [
+                        (prefix, step, label)
+                        for prefix, step, _graph, label in train_examples
+                    ]
+                )
+                monitor.fit(examples)
             calibrate_monitor(
-                monitor, [(trace, steps)], target_fprs=(fpr,),
+                monitor,
+                [(events, benign_result["total_steps"])
+                 for events, benign_result in benign_traces],
+                target_fprs=(fpr,),
             )
 
-            gg = _graph_getter_factory(trace, result["episode_id"])
             m = evaluate_episode(
                 monitor, trace, steps, intervention,
-                fpr_level=fpr, graph_getter=gg,
+                fpr_level=fpr,
+                graph_getter=_graph_getter_factory(trace, result["episode_id"]),
             )
             results.append({
                 "scenario": scenario,
@@ -292,7 +433,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.command == "compare":
         scenarios = [s.strip() for s in args.scenarios.split(",")]
         monitors = [m.strip() for m in args.monitors.split(",")]
-        results = _compare(scenarios, monitors, args.fpr, args.seed)
+        train_scenarios = [s.strip() for s in args.train_scenarios.split(",")]
+        results = _compare(
+            scenarios, monitors, args.fpr, args.seed, train_scenarios
+        )
         print(json.dumps(results, indent=2, default=str))
         if args.output:
             with open(args.output, "w") as f:
@@ -300,7 +444,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if args.command == "calibrate":
-        monitor = MONITOR_REGISTRY[args.monitor]()
+        monitor = _make_monitor(args.monitor, args.seed)
         # Load benign traces from directory if it exists.
         benign = []
         if os.path.isdir(args.benign_traces):
@@ -314,7 +458,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                             line = line.strip()
                             if line:
                                 events.append(TraceEvent.model_validate_json(line))
-                    if events:
+                    is_benign = not any(
+                        event.event_type.value == "episode_end"
+                        and event.payload.get("policy_violation")
+                        for event in events
+                    )
+                    if events and is_benign:
                         benign.append((events, max(e.step for e in events)))
         if not benign:
             # Fallback: generate a benign trace.
@@ -332,25 +481,55 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.command == "ablate":
         scenarios = [s.strip() for s in args.scenarios.split(",")]
+        train_scenarios = [
+            s.strip() for s in args.train_scenarios.split(",")
+        ]
+        overlap = set(scenarios) & set(train_scenarios)
+        if overlap:
+            raise ValueError(
+                f"Training and test scenarios must be disjoint: {sorted(overlap)}"
+            )
+        train_templates = set(train_scenarios) | {
+            "file_backup",
+            "email_triage",
+        }
+        validation_templates = {"code_review"}
+        test_templates = set(scenarios)
+        if (
+            train_templates & validation_templates
+            or train_templates & test_templates
+            or validation_templates & test_templates
+        ):
+            raise ValueError(
+                "Training, calibration, and test templates must be disjoint."
+            )
+        train_episodes = _build_episode_records(train_scenarios, args.seed)
         test_episodes = []
         for fam in scenarios:
-            trace, result = run_episode_trace(fam, adversarial=True, seed=args.seed)
+            trace, result = run_episode_trace(
+                fam,
+                adversarial=True,
+                seed=args.seed,
+                wording_variant="neutral-2",
+            )
             test_episodes.append({
                 "episode_id": result["episode_id"],
                 "threat_family": fam,
+                "template_id": fam,
                 "trace": trace,
                 "total_steps": result["total_steps"],
                 "intervention_step": result["intervention_step"],
             })
         benign_traces = []
-        for fam in ["file_backup", "email_triage", "code_review"]:
+        for fam in ["code_review"]:
             trace, result = run_episode_trace(fam, adversarial=False,
-                                              seed=args.seed + 100)
+                                              seed=args.seed + 100,
+                                              wording_variant="neutral-1")
             benign_traces.append((trace, result["total_steps"]))
 
-        graph_monitor = MONITOR_REGISTRY["graph"]()
+        graph_monitor = _make_monitor("graph", args.seed)
         ablation_results = run_ablation_study(
-            graph_monitor, test_episodes, benign_traces,
+            graph_monitor, train_episodes, test_episodes, benign_traces,
             DEFAULT_ABLATIONS, fpr_level=args.fpr,
         )
         out = []

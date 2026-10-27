@@ -14,6 +14,7 @@ from .graph import GraphMonitor
 from .rules import RulesMonitor
 from .sequence import SequenceMonitor
 from .temporal import TemporalSequenceMonitor
+from .transformer import TransformerSequenceMonitor
 
 
 class MonitorRegistry:
@@ -25,6 +26,7 @@ class MonitorRegistry:
             "feature": FeatureMonitor,
             "sequence": SequenceMonitor,
             "temporal": TemporalSequenceMonitor,
+            "transformer": TransformerSequenceMonitor,
             "graph": GraphMonitor,
         }
 
@@ -54,21 +56,22 @@ def make_all_monitors() -> List[BaseMonitor]:
     return [default_registry.make(n) for n in default_registry.names()]
 
 
-def make_baselines() -> List[BaseMonitor]:
+def make_baselines(seed: int = 42) -> List[BaseMonitor]:
     """Build the ordinary-trajectory baselines (Phase 3)."""
     return [
         default_registry.make("rules"),
         default_registry.make("feature"),
         default_registry.make("sequence", window=None),
-        default_registry.make("temporal", window=10),
+        default_registry.make("temporal", window=10, seed=seed),
+        default_registry.make("transformer", seed=seed),
     ]
 
 
-def make_proposed() -> BaseMonitor:
+def make_proposed(seed: int = 42) -> BaseMonitor:
     """Build the proposed graph monitor (Phase 4)."""
-    return default_registry.make("graph")
+    return default_registry.make("graph", seed=seed)
 
 
-def make_all() -> List[BaseMonitor]:
+def make_all(seed: int = 42) -> List[BaseMonitor]:
     """Build baselines + proposed graph monitor."""
-    return make_baselines() + [make_proposed()]
+    return make_baselines(seed) + [make_proposed(seed)]

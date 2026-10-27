@@ -55,7 +55,7 @@ Support the hypothesis only if the graph monitor produces **statistically meanin
 | 5 — Study | 17–22 | Evaluation, ablations, and statistics tooling | Implementation complete; research conclusions not yet established |
 | 6 — Release | 23–24 | Release validation and publication artifacts | In progress |
 
-The test suite currently passes (34 tests in the available Python 3.13 environment). Formatting and lint checks are not yet clean. The study code and paper outline are present, but the outline's empirical claims still need to be verified against recorded experiment results.
+The current test suite passes (50 tests in the available Python 3.13 environment). Ruff still reports style/import findings in the codebase. A two-seed Phase 5 smoke run did not support H1; it has only three held-out attack episodes per seed, so it is not evidence for a research conclusion. The study code and paper outline are present, but empirical claims still need a sufficiently powered, preregistered run.
 
 ## Phase 1 — Harness (complete)
 
@@ -95,7 +95,7 @@ Ordinary-trajectory baselines, all sharing the `BaseMonitor` interface
 early-detection metrics in `calibrator.py`).
 
 Modules: `base.py`, `rules.py`, `feature.py`, `sequence.py`, `temporal.py`,
-`calibrator.py`, `registry.py`
+`transformer.py`, `calibrator.py`, `registry.py`
 
 | Monitor | Input | Role |
 |---------|-------|------|
@@ -103,6 +103,7 @@ Modules: `base.py`, `rules.py`, `feature.py`, `sequence.py`, `temporal.py`,
 | feature | aggregated trace statistics | Cheap classical baseline (LogisticRegression) |
 | sequence | serialized trajectory prefix | Primary ordinary-trajectory baseline (TF-IDF + LR) |
 | temporal | event embeddings over time | Strong long-context baseline (sklearn MLP, optional torch) |
+| transformer | serialized event tokens in temporal order | Trainable Transformer encoder sequence baseline |
 
 Each monitor is calibrated on benign validation traces so that alert
 thresholds hit target false-positive rates (1% and 5%). Early-detection
@@ -111,20 +112,22 @@ metrics (lead time, normalized detection time, TPR@FPR) are demonstrated in
 
 ## Phase 4 — Graph Monitor (complete)
 
-The proposed GraphGuard method: a temporal GNN that scores risk on the
-partial typed behavior graph after every action.
+The proposed GraphGuard method: a typed message-passing GNN that scores risk
+on the partial behavior graph after every action. It processes graph snapshots
+with node and edge step features; it does not maintain recurrent hidden state
+across snapshots.
 
 Modules: `graph_model.py`, `graph.py` (in `monitors/`), plus
 `graph_to_tensors()` in `harness/graph.py`.
 
 | Component | Purpose |
 |-----------|---------|
-| TemporalGraphNN | Pure-PyTorch message-passing GNN: typed node/edge embeddings, K rounds of typed message passing, global mean pooling, sigmoid risk head |
+| TemporalGraphNN | Pure-PyTorch message-passing GNN: typed node embeddings and typed/time-aware edge embeddings propagated in K message-passing layers, global mean pooling, sigmoid risk head |
 | GraphMonitor | BaseMonitor-compatible wrapper; scores risk from the graph; fit() trains on labeled prefixes via binary cross-entropy |
 | graph_to_tensors() | Converts BehaviorGraph → node/edge tensors (typed one-hot + step normalization) |
 
-The graph monitor sees explicit provenance / authorization / dependency
-edges, so it can detect relational risk patterns (e.g. untrusted tool
+The graph monitor receives explicit provenance / authorization / dependency
+edges and their step features, so it can model relational risk patterns (e.g. untrusted tool
 output → plan update → credential read → external send) earlier than a
 flat sequence model. `demo_phase4.py` demonstrates calibrated early
 detection across the 6 threat scenarios and compares lead time against
@@ -137,7 +140,8 @@ sequence baselines, with hypothesis testing (H1–H5), ablations, and
 counterfactual replay.
 
 Modules: `study.py`, `statistics.py`, `ablations.py`, `counterfactual.py`
-(in `evaluator/`).
+(in `evaluator/`), plus `protocol.py` and strict split helpers in
+`dataset/splits.py`.
 
 | Component | Purpose |
 |-----------|---------|
@@ -158,7 +162,12 @@ Hypothesis evaluation:
 
 `demo_phase5.py` demonstrates the full study: calibration at FPR=5%, paired
 statistical comparisons (bootstrap CI + paired t-test + Wilcoxon), ablation
-study, and counterfactual replay.
+study, and counterfactual replay. It supports multiple seeds with
+`python demo_phase5.py --seeds 42 43`; the protocol and train/validation/test
+episode IDs are frozen before fitting and test scoring. Training, calibration,
+and test templates and wording variants are kept disjoint. On the current
+default training split, the graph and Transformer models have approximately
+matched capacity (about 108k vs. 113k parameters).
 
 Implementation of the study tooling does not by itself establish H1–H5. No
 empirical conclusion should be treated as supported until experiment outputs

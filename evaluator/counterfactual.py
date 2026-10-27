@@ -16,7 +16,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from harness.graph import BehaviorGraph, EdgeType, NodeType
+from harness.graph import (
+    BehaviorGraph,
+    EdgeType,
+    NodeType,
+    behavior_graph_at_step,
+    trace_prefix_at_step,
+)
 from monitors import GraphMonitor
 
 
@@ -64,12 +70,8 @@ def counterfactual_replay(
     Returns:
         List of CounterfactualResult.
     """
-    prefix = trace[:step]
-
-    # Build the original graph at this step.
-    g_orig = BehaviorGraph(episode_id=episode_id)
-    for ev in prefix:
-        g_orig.ingest_event(ev, ev.step if ev.step else step)
+    prefix = trace_prefix_at_step(trace, step)
+    g_orig = behavior_graph_at_step(trace, step, episode_id)
 
     original_risk = float(graph_monitor.score_prefix(prefix, step, graph=g_orig))
 
@@ -182,27 +184,20 @@ def remove_sends_to_external_transform():
 
 
 def sanitize_tool_output_transform():
-    """Sanitize untrusted tool output: remove derived_from edges from
-    tool_result nodes (simulating output sanitization)."""
+    """Remove tool-result nodes to simulate withholding tool output."""
 
     def transform(graph: BehaviorGraph) -> BehaviorGraph:
         new_g = BehaviorGraph(episode_id=graph.episode_id)
+        old_to_new = {}
         for node in graph.nodes.values():
-            new_g.node(node_type=node.node_type, step=node.step,
-                       attributes=dict(node.attributes))
-        old_to_new: Dict[str, str] = {}
-        for new_node in new_g.nodes.values():
-            for old_node in graph.nodes.values():
-                if (old_node.step == new_node.step
-                        and old_node.node_type == new_node.node_type
-                        and old_node.node_id not in old_to_new):
-                    old_to_new[old_node.node_id] = new_node.node_id
-                    break
+            if node.node_type == NodeType.TOOL_RESULT:
+                continue
+            old_to_new[node.node_id] = new_g.node(
+                node_type=node.node_type,
+                step=node.step,
+                attributes=dict(node.attributes),
+            )
         for edge in graph.edges.values():
-            if edge.edge_type == EdgeType.DERIVED_FROM:
-                source = graph.nodes.get(edge.source_id)
-                if source is not None and source.node_type == NodeType.TOOL_RESULT:
-                    continue  # remove derived_from from tool results
             if edge.source_id not in old_to_new or edge.target_id not in old_to_new:
                 continue
             new_g.edge(

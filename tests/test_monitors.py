@@ -2,34 +2,41 @@
 
 from __future__ import annotations
 
-from harness import (Agent, HarnessConfig, Orchestrator, Sandbox, Telemetry,
-                     make_default_gateway, verify_determinism)
-from harness.scenarios import get_scenario
+import tempfile
+
+from dataset import EpisodeGenerator, GenerationConfig
+from harness import Sandbox, make_default_gateway
+from harness.graph import trace_prefix_at_step
+from harness.schema import TraceEvent
 
 from monitors import (FeatureMonitor, MonitorRegistry, RulesMonitor,
-                      SequenceMonitor, TemporalSequenceMonitor, calibrate_all,
+                      SequenceMonitor, TemporalSequenceMonitor,
+                      TransformerSequenceMonitor, calibrate_all,
                       evaluate_episode)
 
 
 def _run_trace(family: str, adversarial: bool, seed: int = 1):
     """Run an episode via the Phase 1 orchestrator and return (trace, steps,
     intervention_step, policy_violation)."""
-    manifest, policy = get_scenario(family)
-    telemetry = Telemetry(base_dir="data/traces")
-    sandbox = Sandbox()
-    gateway = make_default_gateway(telemetry)
-    agent = Agent(name=f"mon_{family}")
-    orch = Orchestrator(
-        agent=agent,
-        gateway=gateway,
-        sandbox=sandbox,
-        telemetry=telemetry,
-        config=HarnessConfig(max_steps=manifest.max_steps,
-                             auto_intervene_on_deny=True),
+    episode = EpisodeGenerator(
+        make_default_gateway,
+        Sandbox(),
+        base_dir=tempfile.mkdtemp(),
+    ).generate(GenerationConfig(
+        task_family=family,
+        seed=seed,
+        adversarial=adversarial,
+        max_steps=10,
+        episode_id=f"monitor_{family}_{seed}_{adversarial}",
+    ))
+    trace = [TraceEvent.model_validate(event) for event in episode.trace_events]
+    result = episode.result
+    return (
+        trace,
+        result["total_steps"],
+        result["intervention_step"],
+        result["policy_violation"],
     )
-    result = orch.run_episode(manifest, policy)
-    trace = telemetry.load_trace(manifest.episode_id)
-    return trace, result["total_steps"], result["intervention_step"], result["policy_violation"]
 
 
 def _label(step: int, intervention_step, total_steps: int) -> bool:
@@ -45,12 +52,19 @@ def test_all_monitors_score_in_range():
     for name in registry.names():
         m = registry.make(name)
         for step in range(1, steps + 1):
-            prefix = trace[:step]
+            prefix = trace_prefix_at_step(trace, step)
             out = m.score(prefix, step)
             assert 0.0 <= out.score <= 1.0, (
                 f"{name} score out of range at step {step}")
             assert out.monitor == name
             assert out.step == step
+
+
+def test_prefix_uses_action_step_not_event_count():
+    trace, _, _, _ = _run_trace("data_exfiltration", True, seed=1)
+    prefix = trace_prefix_at_step(trace, 1)
+    assert len(prefix) > 1
+    assert all(event.step <= 1 for event in prefix)
 
 
 def test_rules_monitor_denies():
@@ -65,7 +79,7 @@ def test_rules_monitor_denies():
 def test_feature_monitor_fit_and_score():
     trace, steps, intervention, viol = _run_trace("data_exfiltration", True, seed=1)
     m = FeatureMonitor(name="feature")
-    examples = [(trace[:s], s, _label(s, intervention, steps))
+    examples = [(trace_prefix_at_step(trace, s), s, _label(s, intervention, steps))
                 for s in range(1, steps + 1)]
     m.fit(examples)
     out = m.score(trace, steps)
@@ -76,7 +90,7 @@ def test_feature_monitor_fit_and_score():
 def test_sequence_monitor_fit_and_score():
     trace, steps, intervention, viol = _run_trace("data_exfiltration", True, seed=1)
     m = SequenceMonitor(name="sequence", window=None)
-    examples = [(trace[:s], s, _label(s, intervention, steps))
+    examples = [(trace_prefix_at_step(trace, s), s, _label(s, intervention, steps))
                 for s in range(1, steps + 1)]
     m.fit(examples)
     out = m.score(trace, steps)
@@ -87,7 +101,7 @@ def test_sequence_monitor_fit_and_score():
 def test_temporal_monitor_fit_and_score():
     trace, steps, intervention, viol = _run_trace("data_exfiltration", True, seed=1)
     m = TemporalSequenceMonitor(name="temporal", window=5, use_torch=False)
-    examples = [(trace[:s], s, _label(s, intervention, steps))
+    examples = [(trace_prefix_at_step(trace, s), s, _label(s, intervention, steps))
                 for s in range(1, steps + 1)]
     m.fit(examples)
     out = m.score(trace, steps)
@@ -95,8 +109,34 @@ def test_temporal_monitor_fit_and_score():
     assert m._fitted
 
 
+def test_transformer_sequence_monitor_fit_and_score():
+    trace, steps, intervention, _ = _run_trace(
+        "data_exfiltration", True, seed=1
+    )
+    examples = []
+    for step in range(1, steps + 1):
+        prefix = trace_prefix_at_step(trace, step)
+        examples.append((prefix, step, bool(intervention and step >= intervention)))
+
+    monitor = TransformerSequenceMonitor(
+        epochs=1,
+        batch_size=2,
+        model_dim=32,
+        num_heads=4,
+        num_layers=1,
+        max_length=128,
+        seed=7,
+    )
+    monitor.fit(examples)
+    score = monitor.score_prefix(examples[-1][0], steps)
+    assert monitor._fitted
+    assert 0.0 <= score <= 1.0
+    assert monitor.model is not None
+    assert monitor.score(examples[-1][0], steps).details["parameters"] > 0
+
+
 def test_calibration_sets_thresholds():
-    trace, steps, intervention, viol = _run_trace("data_exfiltration", True, seed=1)
+    trace, steps, intervention, viol = _run_trace("data_exfiltration", False, seed=1)
     m = RulesMonitor(name="rules")
     benign = [(trace, steps)]
     report = calibrate_all([m], benign, target_fprs=(0.01, 0.05))
@@ -109,7 +149,10 @@ def test_calibration_sets_thresholds():
 def test_evaluate_episode_detection():
     trace, steps, intervention, viol = _run_trace("data_exfiltration", True, seed=1)
     m = RulesMonitor(name="rules")
-    m.calibrate([(trace, steps)], target_fprs=(0.05,))
+    benign_trace, benign_steps, _, _ = _run_trace(
+        "data_exfiltration", False, seed=101
+    )
+    m.calibrate([(benign_trace, benign_steps)], target_fprs=(0.05,))
     metrics = evaluate_episode(
         m, trace, steps, intervention, fpr_level=0.05,
     )

@@ -180,6 +180,10 @@ class Orchestrator:
                 task_success = False
                 break
 
+            if action.tool == "noop" and action.reasoning.strip().lower() == "done.":
+                task_success = True
+                break
+
             if step == self.config.max_steps:
                 task_success = True
 
